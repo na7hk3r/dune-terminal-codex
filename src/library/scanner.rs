@@ -10,7 +10,12 @@ pub fn scan_directory(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 pdfs.extend(scan_directory(&path));
-            } else if path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false)
+            {
                 pdfs.push(path);
             }
         }

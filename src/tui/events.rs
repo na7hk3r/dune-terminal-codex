@@ -36,13 +36,48 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repo
         return;
     }
 
+    let search = app.active_tab == ActiveTab::Search && app.codex_detail.is_none();
+
+    if search {
+        match key.code {
+            KeyCode::Esc => {
+                if !app.search_input.is_empty() {
+                    app.search_input.clear();
+                    app.search_results.clear();
+                } else {
+                    app.set_tab(ActiveTab::Home);
+                }
+            }
+            KeyCode::Backspace => {
+                app.delete_search_char();
+                if app.search_input.is_empty() {
+                    app.search_results.clear();
+                } else {
+                    app.search(&app.search_input.clone(), db);
+                }
+            }
+            KeyCode::Enter => {
+                if !app.search_results.is_empty() {
+                    let _ = app.open_search_result(db);
+                }
+            }
+            KeyCode::Char(c) => {
+                app.append_search_char(c);
+                if !app.search_input.is_empty() {
+                    app.search(&app.search_input.clone(), db);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.codex_detail.is_some() {
                 app.close_detail();
-            } else if app.active_tab == ActiveTab::Search && !app.search_input.is_empty() {
-                app.search_input.clear();
-                app.search_results.clear();
+            } else if app.active_tab != ActiveTab::Home {
+                app.set_tab(ActiveTab::Home);
             } else {
                 app.quit();
             }
@@ -57,13 +92,33 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repo
         KeyCode::BackTab => app.prev_tab(),
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::PageUp => {
+            for _ in 0..10 {
+                app.select_prev();
+            }
+        }
+        KeyCode::PageDown => {
+            for _ in 0..10 {
+                app.select_next();
+            }
+        }
+        KeyCode::Home => {
+            app.go_to_top();
+        }
+        KeyCode::End => {
+            app.go_to_bottom();
+        }
         KeyCode::Enter => {
-            if app.active_tab == ActiveTab::Codex && app.codex_detail.is_none() {
+            if app.codex_detail.is_some() {
+                app.close_detail();
+            } else if app.active_tab == ActiveTab::Codex {
                 app.show_codex_detail(db);
             } else if app.active_tab == ActiveTab::Library {
                 let _ = app.open_selected_book();
-            } else if app.active_tab == ActiveTab::Search && !app.search_results.is_empty() {
-                let _ = app.open_search_result(db);
+            } else if app.active_tab == ActiveTab::Oracle {
+                app.refresh_oracle(db);
+            } else if app.active_tab == ActiveTab::Home {
+                app.next_tab();
             }
         }
         KeyCode::Char('r') => {
@@ -75,23 +130,6 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repo
             if app.active_tab == ActiveTab::Codex && app.codex_detail.is_none() {
                 app.next_codex_sub_tab();
                 app.switch_codex_sub_tab(app.codex_sub_tab, db);
-            }
-        }
-        KeyCode::Char(c) if app.active_tab == ActiveTab::Search => {
-            if app.codex_detail.is_some() {
-                return;
-            }
-            app.append_search_char(c);
-            if !app.search_input.is_empty() {
-                app.search(&app.search_input.clone(), db);
-            }
-        }
-        KeyCode::Backspace if app.active_tab == ActiveTab::Search => {
-            app.delete_search_char();
-            if app.search_input.is_empty() {
-                app.search_results.clear();
-            } else {
-                app.search(&app.search_input.clone(), db);
             }
         }
         _ => {}

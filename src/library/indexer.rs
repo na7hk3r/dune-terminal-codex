@@ -60,7 +60,7 @@ pub fn index_library(db: &Database, config: &Config, verbose: bool) -> anyhow::R
     Ok(result)
 }
 
-fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u32, i64)> {
+pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u32, i64)> {
     let info = pdf::pdf_info(path)?;
     let title = guess_book_title(path);
 

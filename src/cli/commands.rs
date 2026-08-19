@@ -78,6 +78,10 @@ pub enum Commands {
         /// Show verbose output during indexing
         #[arg(long)]
         verbose: bool,
+
+        /// Index specific file(s) instead of scanning library paths
+        #[arg(long = "file", num_args = 1..)]
+        files: Option<Vec<String>>,
     },
 
     /// Import codex data from external sources

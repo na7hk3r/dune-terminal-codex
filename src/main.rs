@@ -37,7 +37,11 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Quote) => cmd_quote(),
         Some(Commands::Oracle) => cmd_oracle(),
         Some(Commands::Stats) => cmd_stats(),
-        Some(Commands::Index { rebuild, verbose }) => cmd_index(rebuild, verbose),
+        Some(Commands::Index {
+            rebuild,
+            verbose,
+            files,
+        }) => cmd_index(rebuild, verbose, files),
         Some(Commands::ImportCodex) => cmd_import_codex(),
         Some(Commands::Config) => cmd_config(),
         Some(Commands::Open { path, page }) => cmd_open(&path, page),
@@ -292,7 +296,7 @@ fn cmd_stats() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_index(rebuild: bool, verbose: bool) -> anyhow::Result<()> {
+fn cmd_index(rebuild: bool, verbose: bool, files: Option<Vec<String>>) -> anyhow::Result<()> {
     let config = Config::load_or_default();
     config.ensure_dirs()?;
 
@@ -307,16 +311,34 @@ fn cmd_index(rebuild: bool, verbose: bool) -> anyhow::Result<()> {
 
     let db = Database::open(&db_path)?;
 
-    let result = library::indexer::index_library(&db, &config, verbose)?;
+    if let Some(file_paths) = files {
+        for file_path in &file_paths {
+            let path = std::path::Path::new(file_path);
+            if !path.exists() {
+                println!("File not found: {}", file_path);
+                continue;
+            }
+            match library::indexer::index_pdf(&db, path, verbose) {
+                Ok((pages, _book_id)) => {
+                    println!("Indexed: {} ({} pages)", file_path, pages);
+                }
+                Err(e) => {
+                    println!("Error indexing {}: {}", file_path, e);
+                }
+            }
+        }
+    } else {
+        let result = library::indexer::index_library(&db, &config, verbose)?;
 
-    println!("Indexing complete.");
-    println!("  Books:  {}", result.books_indexed);
-    println!("  Pages:  {}", result.pages_indexed);
+        println!("Indexing complete.");
+        println!("  Books:  {}", result.books_indexed);
+        println!("  Pages:  {}", result.pages_indexed);
 
-    if !result.errors.is_empty() {
-        println!("  Errors: {}", result.errors.len());
-        for err in &result.errors {
-            println!("    - {}", err);
+        if !result.errors.is_empty() {
+            println!("  Errors: {}", result.errors.len());
+            for err in &result.errors {
+                println!("    - {}", err);
+            }
         }
     }
 
@@ -492,18 +514,20 @@ fn render_footer(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &
     use ratatui::widgets::Paragraph;
 
     let hint = match app.active_tab {
-        tui::app::ActiveTab::Home => "  [1-6] switch tabs  [Tab] next  [q] quit",
-        tui::app::ActiveTab::Library => "  [j/k] navigate  [Tab] next tab  [q] quit",
-        tui::app::ActiveTab::Search => "  type to search  [Esc] clear/back  [Tab] next tab",
+        tui::app::ActiveTab::Home => "  [1-6] tabs  [Enter] next  [q] quit",
+        tui::app::ActiveTab::Library => {
+            "  [j/k] nav  [PgUp/PgDn] scroll  [Enter] open  [Tab] next  [q] home"
+        }
+        tui::app::ActiveTab::Search => "  type to search  [Enter] open  [Esc] clear  [q] home",
         tui::app::ActiveTab::Codex => {
             if app.codex_detail.is_some() {
-                "  [Esc] back to list  [j/k] scroll"
+                "  [Esc/q] back  [j/k] scroll"
             } else {
-                "  [j/k] navigate  [Enter] details  [c] category  [Tab] next tab"
+                "  [j/k] nav  [c] category  [Enter] details  [Tab] next  [q] home"
             }
         }
-        tui::app::ActiveTab::Oracle => "  [r] new wisdom  [Tab] next tab  [q] quit",
-        tui::app::ActiveTab::Stats => "  [Tab] next tab  [q] quit",
+        tui::app::ActiveTab::Oracle => "  [r/Enter] new wisdom  [Tab] next  [q] home",
+        tui::app::ActiveTab::Stats => "  [Tab] next  [q] home",
     };
 
     let line = Line::from(Span::styled(hint, tui::theme::Theme::dim_style()));

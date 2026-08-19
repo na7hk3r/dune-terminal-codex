@@ -219,6 +219,36 @@ impl App {
         }
     }
 
+    pub fn go_to_top(&mut self) {
+        match self.active_tab {
+            ActiveTab::Library => self.selected_book = 0,
+            ActiveTab::Search => self.selected_result = 0,
+            ActiveTab::Codex => self.selected_codex_item = 0,
+            _ => {}
+        }
+    }
+
+    pub fn go_to_bottom(&mut self) {
+        match self.active_tab {
+            ActiveTab::Library => {
+                if !self.books.is_empty() {
+                    self.selected_book = self.books.len() - 1;
+                }
+            }
+            ActiveTab::Search => {
+                if !self.search_results.is_empty() {
+                    self.selected_result = self.search_results.len() - 1;
+                }
+            }
+            ActiveTab::Codex => {
+                if !self.codex_items.is_empty() {
+                    self.selected_codex_item = self.codex_items.len() - 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn search(&mut self, query: &str, db: &Database) {
         self.search_input = query.to_string();
         self.search_results = db.search_fts(query, 20).unwrap_or_default();
