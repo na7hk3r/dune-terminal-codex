@@ -72,6 +72,23 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repo
         return;
     }
 
+    // Codex detail view: scroll takes priority over list navigation.
+    if app.codex_detail.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Backspace => {
+                app.close_detail();
+            }
+            KeyCode::Down | KeyCode::Char('j') => app.scroll_detail_down(1),
+            KeyCode::Up | KeyCode::Char('k') => app.scroll_detail_up(1),
+            KeyCode::PageDown => app.scroll_detail_down(app.detail_page_size()),
+            KeyCode::PageUp => app.scroll_detail_up(app.detail_page_size()),
+            KeyCode::Char('g') | KeyCode::Home => app.scroll_detail_top(),
+            KeyCode::Char('G') | KeyCode::End => app.scroll_detail_bottom(),
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.codex_detail.is_some() {

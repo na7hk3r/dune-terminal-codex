@@ -5,6 +5,8 @@ use std::thread;
 use std::time::Duration;
 use tracing::{info, warn};
 
+use super::clean::clean_entity_text;
+
 #[derive(Deserialize)]
 struct WikiResponse {
     description: String,
@@ -126,10 +128,11 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
         match fetch_term(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
+                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
                         "INSERT OR REPLACE INTO characters (name, description, source, aliases)
                          VALUES (?1, ?2, 'wiki', ?3)",
-                        rusqlite::params![term.replace('_', " "), resp.description, resp.wiki],
+                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
                     )?;
                     imported += 1;
                     info!("  character: {}", term);
@@ -148,10 +151,11 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
         match fetch_term(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
+                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
                         "INSERT OR REPLACE INTO houses (name, description, source)
                          VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![term.replace('_', " "), resp.description],
+                        rusqlite::params![term.replace('_', " "), description.as_str()],
                     )?;
                     imported += 1;
                     info!("  house: {}", term);
@@ -170,10 +174,11 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
         match fetch_term(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
+                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
                         "INSERT OR REPLACE INTO planets (name, description, source)
                          VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![term.replace('_', " "), resp.description],
+                        rusqlite::params![term.replace('_', " "), description.as_str()],
                     )?;
                     imported += 1;
                     info!("  planet: {}", term);
@@ -193,10 +198,12 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
         match fetch_term(base_url, clean_term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
+                    let description =
+                        clean_entity_text(&clean_term.replace('_', " "), &resp.description);
                     conn.execute(
                         "INSERT OR REPLACE INTO glossary (term, definition, source)
                          VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![clean_term.replace('_', " "), resp.description],
+                        rusqlite::params![clean_term.replace('_', " "), description.as_str()],
                     )?;
                     imported += 1;
                     info!("  glossary: {}", clean_term);

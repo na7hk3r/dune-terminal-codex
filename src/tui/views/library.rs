@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem};
 
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::util::{filename_derivable_from_title, format_number, truncate_ellipsis};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let block = Block::default()
@@ -26,6 +27,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Usable columns inside the borders.
+    let max_cols = (area.width.saturating_sub(2) as usize).max(8);
+
     let items: Vec<ListItem> = app
         .books
         .iter()
@@ -37,15 +41,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 Theme::text_style()
             };
-            let filename = std::path::Path::new(path)
+
+            let mut row = format!("{}{}", marker, title);
+            let filename_stem = std::path::Path::new(path)
                 .file_name()
                 .and_then(|n| n.to_str())
+                .and_then(|n| n.rsplit_once('.').map(|(stem, _)| stem))
                 .unwrap_or("");
+            if !filename_derivable_from_title(title, filename_stem) {
+                row.push_str(&format!(" — {}", filename_stem));
+            }
+            row.push_str(&format!(
+                " ({}p, {}w)",
+                pages,
+                format_number(*words as u64)
+            ));
+
             ListItem::new(Span::styled(
-                format!(
-                    "{}{} — {} ({}p, {}w)",
-                    marker, title, filename, pages, words
-                ),
+                truncate_ellipsis(&row, max_cols),
                 style,
             ))
         })

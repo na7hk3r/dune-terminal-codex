@@ -5,6 +5,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::tui::app::App;
 use crate::tui::theme::Theme;
+use crate::util::format_number;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
@@ -24,17 +25,20 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let lib_lines = vec![
         Line::from(""),
         Line::from(Span::styled("  Books:     ", Theme::dim_style())),
-        Line::from(Span::styled(format!("    {}", books), Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(books)),
+            Theme::text_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled("  Pages:     ", Theme::dim_style())),
         Line::from(Span::styled(
-            format!("    {}", total_pages),
+            format!("    {}", format_number(total_pages)),
             Theme::text_style(),
         )),
         Line::from(""),
         Line::from(Span::styled("  Words:     ", Theme::dim_style())),
         Line::from(Span::styled(
-            format!("    {}", total_words),
+            format!("    {}", format_number(total_words)),
             Theme::text_style(),
         )),
     ];

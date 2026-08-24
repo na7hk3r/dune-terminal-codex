@@ -2,6 +2,7 @@ use crate::config::settings::Config;
 use crate::database::repository::{Database, SearchResult};
 use crate::oracle::engine::OracleEngine;
 use crate::yazi::integration::open_pdf;
+use std::cell::Cell;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -114,6 +115,12 @@ pub struct App {
     pub codex_items: Vec<String>,
     pub selected_codex_item: usize,
     pub codex_detail: Option<String>,
+    /// Scroll offset of the codex detail view (display lines).
+    pub codex_detail_scroll: Cell<usize>,
+    /// Total wrapped display lines of the current detail (updated on render).
+    pub codex_detail_total: Cell<usize>,
+    /// Viewport height (inner rows) of the detail view (updated on render).
+    pub codex_viewport_height: Cell<u16>,
 
     pub oracle_wisdom: Option<String>,
     pub oracle_source: Option<String>,
@@ -136,6 +143,9 @@ impl App {
             codex_items: Vec::new(),
             selected_codex_item: 0,
             codex_detail: None,
+            codex_detail_scroll: Cell::new(0),
+            codex_detail_total: Cell::new(0),
+            codex_viewport_height: Cell::new(1),
             oracle_wisdom,
             oracle_source,
         };
@@ -309,6 +319,39 @@ impl App {
 
     pub fn close_detail(&mut self) {
         self.codex_detail = None;
+        self.codex_detail_scroll.set(0);
+    }
+
+    pub fn scroll_detail_down(&mut self, lines: usize) {
+        let next = self
+            .codex_detail_scroll
+            .get()
+            .saturating_add(lines)
+            .min(self.max_detail_offset());
+        self.codex_detail_scroll.set(next);
+    }
+
+    pub fn scroll_detail_up(&mut self, lines: usize) {
+        self.codex_detail_scroll
+            .set(self.codex_detail_scroll.get().saturating_sub(lines));
+    }
+
+    pub fn scroll_detail_top(&mut self) {
+        self.codex_detail_scroll.set(0);
+    }
+
+    pub fn scroll_detail_bottom(&mut self) {
+        self.codex_detail_scroll.set(self.max_detail_offset());
+    }
+
+    pub fn detail_page_size(&self) -> usize {
+        (self.codex_viewport_height.get() as usize).max(1)
+    }
+
+    fn max_detail_offset(&self) -> usize {
+        self.codex_detail_total
+            .get()
+            .saturating_sub(self.detail_page_size())
     }
 
     fn load_books(db: &Database) -> Vec<(String, String, u32, u32)> {

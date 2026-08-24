@@ -90,9 +90,9 @@ pub enum Commands {
     /// Show or edit configuration
     Config,
 
-    /// Open a PDF at a specific page
+    /// Open a PDF at a specific page, by path or by book id
     Open {
-        /// Path to PDF file
+        /// Path to a PDF file, or the numeric id shown by `dune books`
         path: String,
 
         /// Page number to open at

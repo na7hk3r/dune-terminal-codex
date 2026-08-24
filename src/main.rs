@@ -8,6 +8,7 @@ mod library;
 mod oracle;
 mod search;
 mod tui;
+mod util;
 mod yazi;
 
 use clap::Parser;
@@ -15,6 +16,7 @@ use cli::commands::{Cli, Commands};
 use config::settings::Config;
 use database::repository::Database;
 use tracing_subscriber::EnvFilter;
+use util::format_number;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -157,11 +159,21 @@ fn cmd_book(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn print_entry(info: &str) {
+    for line in info.lines() {
+        if let Some(header) = line.strip_prefix("## ") {
+            println!("{}", header.to_uppercase());
+        } else {
+            println!("{}", line);
+        }
+    }
+}
+
 fn cmd_character(name: &str) -> anyhow::Result<()> {
     let db = open_database()?;
     match db.character_by_name(name)? {
         Some(info) => {
-            println!("{}", info);
+            print_entry(&info);
         }
         None => {
             println!("No character found matching \"{}\"", name);
@@ -175,7 +187,7 @@ fn cmd_house(name: &str) -> anyhow::Result<()> {
     let db = open_database()?;
     match db.house_by_name(name)? {
         Some(info) => {
-            println!("{}", info);
+            print_entry(&info);
         }
         None => {
             println!("No house found matching \"{}\"", name);
@@ -189,7 +201,7 @@ fn cmd_planet(name: &str) -> anyhow::Result<()> {
     let db = open_database()?;
     match db.planet_by_name(name)? {
         Some(info) => {
-            println!("{}", info);
+            print_entry(&info);
         }
         None => {
             println!("No planet found matching \"{}\"", name);
@@ -219,7 +231,7 @@ fn cmd_glossary(term: Option<&str>) -> anyhow::Result<()> {
             println!("{} terms", entries.len());
         }
         Some(t) => match db.glossary_by_term(t)? {
-            Some(info) => println!("{}", info),
+            Some(info) => print_entry(&info),
             None => {
                 println!("No term found matching \"{}\"", t);
                 println!("\nRun: dune glossary  (to browse all terms)");
@@ -261,15 +273,9 @@ fn cmd_oracle() -> anyhow::Result<()> {
     match oracle.random_wisdom()? {
         Some((wisdom, source)) => {
             println!();
-            println!("  ╭──────────────────────────────────────────╮");
-            println!("  │               ORACLE                      │");
-            println!("  │                                           │");
-            println!("  \"{}\"", wisdom);
-            if let Some(s) = source {
-                println!("  — {}", s);
+            for line in util::oracle_box(&wisdom, source.as_deref()) {
+                println!("{}", line);
             }
-            println!("  │                                           │");
-            println!("  ╰──────────────────────────────────────────╯");
             println!();
         }
         None => {
@@ -378,9 +384,24 @@ fn cmd_config() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_open(path: &str, page: Option<u32>) -> anyhow::Result<()> {
+fn cmd_open(target: &str, page: Option<u32>) -> anyhow::Result<()> {
     let config = Config::load_or_default();
-    yazi::integration::open_pdf(path, page, &config.reader.command)?;
+
+    // Numeric target: resolve the book from the database by id.
+    if let Ok(id) = target.trim().parse::<i64>() {
+        let db = open_database()?;
+        match db.book_path_by_id(id)? {
+            Some(path) => {
+                return yazi::integration::open_pdf(&path, page, &config.reader.command);
+            }
+            None => {
+                println!("No book with id {}. Run `dune books` to list ids.", id);
+                return Ok(());
+            }
+        }
+    }
+
+    yazi::integration::open_pdf(target, page, &config.reader.command)?;
     Ok(())
 }
 
@@ -521,7 +542,7 @@ fn render_footer(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &
         tui::app::ActiveTab::Search => "  type to search  [Enter] open  [Esc] clear  [q] home",
         tui::app::ActiveTab::Codex => {
             if app.codex_detail.is_some() {
-                "  [Esc/q] back  [j/k] scroll"
+                "  [Esc/q] back  [j/k] línea  [PgUp/PgDn] página  [g/G] inicio/fin"
             } else {
                 "  [j/k] nav  [c] category  [Enter] details  [Tab] next  [q] home"
             }
@@ -536,28 +557,4 @@ fn render_footer(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &
     frame.render_widget(paragraph, area);
 }
 
-fn format_number(n: u64) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_number_basic() {
-        assert_eq!(format_number(0), "0");
-        assert_eq!(format_number(1), "1");
-        assert_eq!(format_number(100), "100");
-        assert_eq!(format_number(1000), "1,000");
-        assert_eq!(format_number(1234567), "1,234,567");
-    }
-}

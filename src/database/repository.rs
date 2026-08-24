@@ -93,6 +93,20 @@ impl Database {
         Ok(results)
     }
 
+    /// Resolves a book's file path from its numeric id.
+    pub fn book_path_by_id(&self, id: i64) -> anyhow::Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT file_path FROM books WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(path) => Ok(Some(path)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn insert_book(
         &self,
         title: &str,
@@ -274,5 +288,47 @@ mod tests {
         let results = db.search_fts("spice", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("spice"));
+    }
+
+    #[test]
+    fn book_path_by_id_resolves_and_misses_gracefully() {
+        let db = test_db();
+        let id = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        assert_eq!(
+            db.book_path_by_id(id).unwrap(),
+            Some("/tmp/dune.pdf".to_string())
+        );
+        assert_eq!(db.book_path_by_id(9999).unwrap(), None);
+    }
+
+    #[test]
+    fn search_fts_ranks_by_bm25_relevance() {
+        let db = test_db();
+        // Insert sparse book first so ids would put it first if sorted by id.
+        let sparse = db.insert_book("A Sparse Book", "/tmp/sparse.pdf", 10, 100, 1)
+            .unwrap();
+        let dense = db.insert_book("B Dense Book", "/tmp/dense.pdf", 10, 100, 1)
+            .unwrap();
+
+        db.insert_page(sparse, 1, "the spice must flow once").unwrap();
+        db.insert_page(
+            dense,
+            1,
+            "spice spice spice the spice melange is the spice of arrakis",
+        )
+        .unwrap();
+
+        let results = db.search_fts("spice", 10).unwrap();
+        assert!(results.len() >= 2);
+        // bm25: denser match ranks first regardless of insertion order.
+        assert_eq!(
+            results[0].book_title, "B Dense Book",
+            "expected dense match first, got order: {:?}",
+            results.iter().map(|r| &r.book_title).collect::<Vec<_>>()
+        );
+        // Highlight markers stay intact.
+        assert!(results[0].highlighted.contains(">>>spice<<<"));
     }
 }
