@@ -14,8 +14,9 @@ can profit from my complete lack of restraint.
 
 - Indexes your personal PDF collection of the saga for full-text search
   (FTS5 with bm25 relevance ranking).
-- Populates a codex of characters, Great Houses, planets and glossary terms
-  from a Dune wiki.
+- Populates a codex of characters, Great Houses, planets and glossary terms,
+  courtesy of [julian31186/dune-api](https://github.com/julian31186/dune-api)
+  (data from the official [Dune Wiki](https://dune.fandom.com/)).
 - Dispenses quotes and random wisdom via the Oracle.
 - Works as an interactive TUI (`dune`) and as plain CLI commands.
 
@@ -98,7 +99,7 @@ Config file: `~/.config/dune/config.toml` (created by `dune config`).
 | `[library] paths`      | `["~/Books/Dune"]` | Folders scanned by `dune index`  |
 | `[reader] command`     | `"okular"`         | PDF viewer used by `dune open`   |
 | `[reader] args`        | `[]`               | Extra arguments for the viewer   |
-| `[codex] wiki_url`     | Dune wiki API      | Source used by `dune import-codex` |
+| `[codex] wiki_url`     | Dune API endpoint  | Source used by `dune import-codex` |
 
 The database lives at `~/.local/share/dune/dune.db`; delete it (or run
 `dune index --rebuild`) to start over.
