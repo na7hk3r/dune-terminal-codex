@@ -100,10 +100,21 @@ impl CodexSubTab {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CodexCounts {
+    pub characters: u64,
+    pub houses: u64,
+    pub planets: u64,
+    pub glossary: u64,
+    pub quotes: u64,
+}
+
 pub struct App {
     pub running: bool,
     pub active_tab: ActiveTab,
     pub codex_sub_tab: CodexSubTab,
+    /// PDF viewer command from `[reader]` in the config.
+    pub reader_command: String,
 
     pub books: Vec<(String, String, u32, u32)>,
     pub selected_book: usize,
@@ -115,6 +126,7 @@ pub struct App {
     pub codex_items: Vec<String>,
     pub selected_codex_item: usize,
     pub codex_detail: Option<String>,
+    pub codex_counts: CodexCounts,
     /// Scroll offset of the codex detail view (display lines).
     pub codex_detail_scroll: Cell<usize>,
     /// Total wrapped display lines of the current detail (updated on render).
@@ -127,14 +139,16 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(db: &Database, _config: &Config) -> Self {
+    pub fn new(db: &Database, config: &Config) -> Self {
         let books = Self::load_books(db);
         let (oracle_wisdom, oracle_source) = Self::load_oracle(db);
+        let codex_counts = Self::load_codex_counts(db);
 
         let mut app = Self {
             running: true,
             active_tab: ActiveTab::Home,
             codex_sub_tab: CodexSubTab::Characters,
+            reader_command: config.reader.command.clone(),
             books,
             selected_book: 0,
             search_input: String::new(),
@@ -143,6 +157,7 @@ impl App {
             codex_items: Vec::new(),
             selected_codex_item: 0,
             codex_detail: None,
+            codex_counts,
             codex_detail_scroll: Cell::new(0),
             codex_detail_total: Cell::new(0),
             codex_viewport_height: Cell::new(1),
@@ -195,12 +210,11 @@ impl App {
                     self.selected_result = (self.selected_result + 1) % self.search_results.len();
                 }
             }
-            ActiveTab::Codex => {
-                if !self.codex_items.is_empty() {
+            ActiveTab::Codex
+                if !self.codex_items.is_empty() => {
                     self.selected_codex_item =
                         (self.selected_codex_item + 1) % self.codex_items.len();
                 }
-            }
             _ => {}
         }
     }
@@ -219,12 +233,11 @@ impl App {
                     self.selected_result = (self.selected_result + len - 1) % len;
                 }
             }
-            ActiveTab::Codex => {
-                if !self.codex_items.is_empty() {
+            ActiveTab::Codex
+                if !self.codex_items.is_empty() => {
                     let len = self.codex_items.len();
                     self.selected_codex_item = (self.selected_codex_item + len - 1) % len;
                 }
-            }
             _ => {}
         }
     }
@@ -250,18 +263,17 @@ impl App {
                     self.selected_result = self.search_results.len() - 1;
                 }
             }
-            ActiveTab::Codex => {
-                if !self.codex_items.is_empty() {
+            ActiveTab::Codex
+                if !self.codex_items.is_empty() => {
                     self.selected_codex_item = self.codex_items.len() - 1;
                 }
-            }
             _ => {}
         }
     }
 
     pub fn search(&mut self, query: &str, db: &Database) {
         self.search_input = query.to_string();
-        self.search_results = db.search_fts(query, 20).unwrap_or_default();
+        self.search_results = db.search_fts(query, None, 20).unwrap_or_default();
         self.selected_result = 0;
     }
 
@@ -430,13 +442,31 @@ impl App {
         }
     }
 
+    fn load_codex_counts(db: &Database) -> CodexCounts {
+        fn count(db: &Database, table: &str) -> u64 {
+            db.conn
+                .query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap_or(0) as u64
+        }
+
+        CodexCounts {
+            characters: count(db, "characters"),
+            houses: count(db, "houses"),
+            planets: count(db, "planets"),
+            glossary: count(db, "glossary"),
+            quotes: count(db, "quotes"),
+        }
+    }
+
     pub fn open_selected_book(&self) -> anyhow::Result<()> {
         if self.active_tab != ActiveTab::Library || self.books.is_empty() {
             return Ok(());
         }
         let (_, path, page, _) = &self.books[self.selected_book];
         let page_num = if *page > 0 { Some(*page) } else { None };
-        open_pdf(path, page_num, "okular")
+        open_pdf(path, page_num, &self.reader_command)
     }
 
     pub fn open_search_result(&self, db: &Database) -> anyhow::Result<()> {
@@ -459,6 +489,6 @@ impl App {
             )
             .map_err(|e| anyhow::anyhow!("book not found: {}", e))?;
 
-        open_pdf(&file_path, page_num, "okular")
+        open_pdf(&file_path, page_num, &self.reader_command)
     }
 }

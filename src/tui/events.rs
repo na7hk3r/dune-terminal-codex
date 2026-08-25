@@ -18,21 +18,17 @@ impl EventHandler {
     }
 
     pub fn next(&self) -> anyhow::Result<AppEvent> {
-        if event::poll(self.tick_rate)? {
-            if let Event::Key(key) = event::read()? {
+        if event::poll(self.tick_rate)?
+            && let Event::Key(key) = event::read()? {
                 return Ok(AppEvent::Key(key));
             }
-        }
         Ok(AppEvent::Tick)
     }
 }
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repository::Database) {
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            KeyCode::Char('c') => app.quit(),
-            _ => {}
-        }
+        if let KeyCode::Char('c') = key.code { app.quit() }
         return;
     }
 
@@ -143,12 +139,11 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent, db: &crate::database::repo
                 app.refresh_oracle(db);
             }
         }
-        KeyCode::Char('c') => {
-            if app.active_tab == ActiveTab::Codex && app.codex_detail.is_none() {
+        KeyCode::Char('c')
+            if app.active_tab == ActiveTab::Codex && app.codex_detail.is_none() => {
                 app.next_codex_sub_tab();
                 app.switch_codex_sub_tab(app.codex_sub_tab, db);
             }
-        }
         _ => {}
     }
 }

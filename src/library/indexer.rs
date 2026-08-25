@@ -62,7 +62,9 @@ pub fn index_library(db: &Database, config: &Config, verbose: bool) -> anyhow::R
 
 pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u32, i64)> {
     let info = pdf::pdf_info(path)?;
-    let title = guess_book_title(path);
+    // Prefer the PDF's embedded title; fall back to guessing from the filename.
+    let title = info.title.unwrap_or_else(|| guess_book_title(path));
+    let page_count = info.page_count;
 
     let metadata = std::fs::metadata(path)?;
     let file_size = metadata.len() as i64;
@@ -70,14 +72,14 @@ pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u
     let book_id = db.insert_book(
         &title,
         &path.to_string_lossy(),
-        info.page_count,
+        page_count,
         0,
         file_size,
     )?;
 
     let mut total_words: u32 = 0;
 
-    for page_num in 1..=info.page_count {
+    for page_num in 1..=page_count {
         match pdf::extract_page(path, page_num) {
             Ok(content) => {
                 total_words += pdf::word_count(&content);
@@ -96,18 +98,12 @@ pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u
         rusqlite::params![total_words, book_id],
     )?;
 
-    Ok((info.page_count, book_id))
+    Ok((page_count, book_id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::repository::Database;
-    use std::path::Path;
-
-    fn test_db() -> Database {
-        Database::open(Path::new(":memory:")).unwrap()
-    }
 
     #[test]
     fn index_result_defaults() {

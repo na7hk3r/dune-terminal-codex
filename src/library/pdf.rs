@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::process::Command;
 
-#[allow(dead_code)]
 pub struct PdfInfo {
     pub page_count: u32,
     pub title: Option<String>,
@@ -29,7 +28,7 @@ pub fn pdf_info(path: &Path) -> anyhow::Result<PdfInfo> {
     let title = stdout
         .lines()
         .find(|l| l.starts_with("Title:"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|l| l.split_once(':').map(|x| x.1))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
@@ -39,22 +38,6 @@ pub fn pdf_info(path: &Path) -> anyhow::Result<PdfInfo> {
 pub fn extract_page(path: &Path, page: u32) -> anyhow::Result<String> {
     let output = Command::new("pdftotext")
         .args(["-f", &page.to_string(), "-l", &page.to_string()])
-        .arg(path)
-        .arg("-")
-        .output()
-        .map_err(|e| anyhow::anyhow!("pdftotext not found: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("pdftotext failed: {}", stderr));
-    }
-
-    Ok(fix_extracted_text(&String::from_utf8_lossy(&output.stdout)))
-}
-
-#[allow(dead_code)]
-pub fn extract_all(path: &Path) -> anyhow::Result<String> {
-    let output = Command::new("pdftotext")
         .arg(path)
         .arg("-")
         .output()

@@ -206,7 +206,7 @@ mod tests {
         let widths: Vec<usize> = lines.iter().map(|l| l.chars().count()).collect();
         assert!(widths.windows(2).all(|w| w[0] == w[1]));
         // The quote must live inside the borders, never on its own line.
-        assert!(lines.iter().any(|l| l.contains('“') && l.contains('"') == false));
+        assert!(lines.iter().any(|l| l.contains('“') && !l.contains('"')));
         assert!(lines
             .iter()
             .all(|l| !l.contains("Fear") || (l.starts_with("  │") && l.ends_with('│'))));

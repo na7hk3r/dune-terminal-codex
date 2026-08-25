@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("Next tab", Theme::text_style()),
         Span::styled("  │  ", Theme::dim_style()),
         Span::styled("  [q] ", Theme::accent_style()),
-        Span::styled("Quit", Theme::text_style()),
+        Span::styled("Home", Theme::text_style()),
     ]);
 
     let status = Paragraph::new(status_line)

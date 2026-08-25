@@ -137,10 +137,7 @@ fn render_detail(frame: &mut Frame, area: Rect, app: &App, detail: &str) {
 
     let current = if total == 0 { 0 } else { offset + 1 };
     let indicator = Line::from(Span::styled(
-        format!(
-            " línea {}/{} · [j/k] líneas · [PgUp/PgDn] página · [g/G] inicio/fin · [Esc] volver",
-            current, total
-        ),
+        format!(" línea {}/{}", current, total),
         Theme::dim_style(),
     ));
     frame.render_widget(Paragraph::new(indicator), rows[1]);

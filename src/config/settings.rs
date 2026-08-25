@@ -1,4 +1,3 @@
-use crate::error::{DuneError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -7,7 +6,7 @@ const APP_NAME: &str = "dune";
 const CONFIG_FILE: &str = "config.toml";
 const DB_FILE: &str = "dune.db";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub library: LibraryConfig,
@@ -77,55 +76,39 @@ fn default_wiki_url() -> String {
     "https://dune-api-production.up.railway.app".to_string()
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            library: LibraryConfig::default(),
-            reader: ReaderConfig::default(),
-            codex: CodexConfig::default(),
-        }
-    }
-}
-
 impl Config {
-    pub fn config_dir() -> Result<PathBuf> {
-        let base = dirs::config_dir().ok_or_else(|| DuneError::ConfigInvalid {
-            reason: "cannot determine config directory".to_string(),
-        })?;
+    pub fn config_dir() -> anyhow::Result<PathBuf> {
+        let base =
+            dirs::config_dir().ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?;
         Ok(base.join(APP_NAME))
     }
 
-    pub fn data_dir() -> Result<PathBuf> {
-        let base = dirs::data_dir().ok_or_else(|| DuneError::ConfigInvalid {
-            reason: "cannot determine data directory".to_string(),
-        })?;
+    pub fn data_dir() -> anyhow::Result<PathBuf> {
+        let base = dirs::data_dir().ok_or_else(|| anyhow::anyhow!("cannot determine data directory"))?;
         Ok(base.join(APP_NAME))
     }
 
-    pub fn cache_dir() -> Result<PathBuf> {
-        let base = dirs::cache_dir().ok_or_else(|| DuneError::ConfigInvalid {
-            reason: "cannot determine cache directory".to_string(),
-        })?;
+    pub fn cache_dir() -> anyhow::Result<PathBuf> {
+        let base = dirs::cache_dir().ok_or_else(|| anyhow::anyhow!("cannot determine cache directory"))?;
         Ok(base.join(APP_NAME))
     }
 
-    pub fn config_path() -> Result<PathBuf> {
+    pub fn config_path() -> anyhow::Result<PathBuf> {
         Ok(Self::config_dir()?.join(CONFIG_FILE))
     }
 
-    pub fn db_path() -> Result<PathBuf> {
+    pub fn db_path() -> anyhow::Result<PathBuf> {
         Ok(Self::data_dir()?.join(DB_FILE))
     }
 
-    pub fn load() -> Result<Self> {
+    pub fn load() -> anyhow::Result<Self> {
         let path = Self::config_path()?;
         if !path.exists() {
-            return Err(DuneError::ConfigNotFound { path });
+            anyhow::bail!("configuration not found at {}", path.display());
         }
         let content = fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&content).map_err(|e| DuneError::ConfigInvalid {
-            reason: e.to_string(),
-        })?;
+        let config: Config =
+            toml::from_str(&content).map_err(|e| anyhow::anyhow!("invalid configuration: {}", e))?;
         Ok(config)
     }
 
@@ -133,18 +116,17 @@ impl Config {
         Self::load().unwrap_or_default()
     }
 
-    pub fn save(&self) -> Result<PathBuf> {
+    pub fn save(&self) -> anyhow::Result<PathBuf> {
         let dir = Self::config_dir()?;
         fs::create_dir_all(&dir)?;
         let path = dir.join(CONFIG_FILE);
-        let content = toml::to_string_pretty(self).map_err(|e| DuneError::ConfigInvalid {
-            reason: e.to_string(),
-        })?;
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| anyhow::anyhow!("cannot serialize configuration: {}", e))?;
         fs::write(&path, content)?;
         Ok(path)
     }
 
-    pub fn ensure_dirs(&self) -> Result<()> {
+    pub fn ensure_dirs(&self) -> anyhow::Result<()> {
         fs::create_dir_all(Self::config_dir()?)?;
         fs::create_dir_all(Self::data_dir()?)?;
         fs::create_dir_all(Self::cache_dir()?)?;

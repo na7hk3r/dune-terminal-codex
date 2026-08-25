@@ -27,9 +27,11 @@ Built with Rust, `ratatui` 0.30 and `rusqlite`.
 
 ## Requirements
 
+- Linux (built and tested on Arch Linux; other platforms are untested)
 - Rust stable (`rustup` recommended)
 - `pdftotext` / `pdfinfo` (poppler-utils) for PDF indexing
-- A PDF viewer for `dune open` (default: `okular`, configurable)
+- A PDF viewer for `dune open` (default: `okular`, configurable via
+  `[reader] command`; opening at a specific page only works with okular)
 
 ## Build
 

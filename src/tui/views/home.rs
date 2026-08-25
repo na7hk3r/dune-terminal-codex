@@ -28,11 +28,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     ];
 
     let tabs = [
-        ("1", "LIBRARY", "Browse indexed books"),
-        ("2", "CODEX", "Characters, houses, planets"),
+        ("2", "LIBRARY", "Browse indexed books"),
         ("3", "SEARCH", "Full-text search"),
-        ("4", "ORACLE", "Receive wisdom"),
-        ("5", "STATS", "Library statistics"),
+        ("4", "CODEX", "Characters, houses, planets"),
+        ("5", "ORACLE", "Receive wisdom"),
+        ("6", "STATS", "Library statistics"),
     ];
 
     for (key, name, desc) in &tabs {

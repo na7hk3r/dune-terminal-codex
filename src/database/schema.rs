@@ -1,6 +1,3 @@
-#[allow(dead_code)]
-pub const SCHEMA_VERSION: u32 = 1;
-
 pub const CREATE_BOOKS: &str = "
 CREATE TABLE IF NOT EXISTS books (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

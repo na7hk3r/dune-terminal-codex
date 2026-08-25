@@ -1,12 +1,9 @@
 mod cli;
-mod codex;
 mod codex_import;
 mod config;
 mod database;
-mod error;
 mod library;
 mod oracle;
-mod search;
 mod tui;
 mod util;
 mod yazi;
@@ -51,13 +48,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn open_database() -> anyhow::Result<Database> {
-    let config = Config::load_or_default();
-    Database::open_default(&config)
+    Database::open_default()
 }
 
 fn cmd_search(query: &str, book: Option<&str>) -> anyhow::Result<()> {
     let db = open_database()?;
-    let results = db.search_fts(query, 20)?;
+    let results = db.search_fts(query, book, 20)?;
 
     if results.is_empty() {
         println!("No results for \"{}\"", query);
@@ -542,7 +538,7 @@ fn render_footer(frame: &mut ratatui::Frame, area: ratatui::layout::Rect, app: &
         tui::app::ActiveTab::Search => "  type to search  [Enter] open  [Esc] clear  [q] home",
         tui::app::ActiveTab::Codex => {
             if app.codex_detail.is_some() {
-                "  [Esc/q] back  [j/k] línea  [PgUp/PgDn] página  [g/G] inicio/fin"
+                "  [Esc/q] back  [j/k] line  [PgUp/PgDn] page  [g/G] top/bottom"
             } else {
                 "  [j/k] nav  [c] category  [Enter] details  [Tab] next  [q] home"
             }

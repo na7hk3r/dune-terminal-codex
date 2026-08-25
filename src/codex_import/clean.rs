@@ -576,8 +576,8 @@ fn strip_trailing_caption<'a>(text: &'a str, hint_lower: &str) -> &'a str {
         return t;
     }
     let lower = t.to_lowercase();
-    if let Some(pos) = lower.rfind(hint_lower) {
-        if pos > 0 && t.is_char_boundary(pos) {
+    if let Some(pos) = lower.rfind(hint_lower)
+        && pos > 0 && t.is_char_boundary(pos) {
             let prev = t.as_bytes()[pos - 1];
             let tail = &t[pos..];
             if matches!(prev, b' ' | b'.')
@@ -587,7 +587,6 @@ fn strip_trailing_caption<'a>(text: &'a str, hint_lower: &str) -> &'a str {
                 return t[..pos].trim_end();
             }
         }
-    }
     t
 }
 
@@ -696,12 +695,11 @@ fn push_field(fields: &mut Vec<(&'static str, String)>, label: &'static str, val
         return;
     }
     const PAIRS: &[(&str, &str)] = &[("Place of birth", "Born"), ("Place of death", "Died")];
-    if let Some((_, anchor)) = PAIRS.iter().find(|(place, _)| *place == label) {
-        if let Some(entry) = fields.iter_mut().find(|(l, _)| l == anchor) {
+    if let Some((_, anchor)) = PAIRS.iter().find(|(place, _)| *place == label)
+        && let Some(entry) = fields.iter_mut().find(|(l, _)| l == anchor) {
             entry.1.push_str(&format!(" · {}", value));
             return;
         }
-    }
     fields.push((label, value));
 }
 
@@ -729,9 +727,7 @@ fn insert_glue_spaces(text: &str) -> String {
     for ch in text.chars() {
         if let Some(p) = prev {
             let boundary = p.is_lowercase() && ch.is_uppercase() && !(p == 'c' && ch == 'K');
-            if boundary {
-                out.push(' ');
-            } else if p.is_ascii_alphanumeric() && ch == '(' {
+            if boundary || (p.is_ascii_alphanumeric() && ch == '(') {
                 out.push(' ');
             } else if p == ')' && (ch.is_uppercase() || ch == '(') {
                 // Item lists like "(wife)Tanidia Nerus (...)".
@@ -754,15 +750,14 @@ fn repair_sentence_boundaries(text: &str) -> String {
         if matches!(ch, '.' | '!' | '?') {
             let next = chars.get(i + 1);
             let prev = if i > 0 { Some(chars[i - 1]) } else { None };
-            if let Some(n) = next {
-                if n.is_uppercase() && *n != ' ' && prev != Some(' ') {
+            if let Some(n) = next
+                && n.is_uppercase() && *n != ' ' && prev != Some(' ') {
                     // Avoid breaking abbreviations like "St.Paul"? Rare here;
                     // only split when the terminator follows a letter/digit.
                     if prev.is_some_and(|p| p.is_alphanumeric()) {
                         out.push(' ');
                     }
                 }
-            }
         }
     }
     out

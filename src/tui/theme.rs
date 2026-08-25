@@ -11,22 +11,12 @@ impl Theme {
         Color::Rgb(245, 235, 224)
     }
 
-    #[allow(dead_code)]
-    pub fn bone() -> Color {
-        Color::Rgb(222, 213, 195)
-    }
-
     pub fn dark_brown() -> Color {
         Color::Rgb(87, 66, 46)
     }
 
     pub fn earth() -> Color {
         Color::Rgb(139, 119, 89)
-    }
-
-    #[allow(dead_code)]
-    pub fn olive() -> Color {
-        Color::Rgb(128, 128, 80)
     }
 
     pub fn bg() -> Color {

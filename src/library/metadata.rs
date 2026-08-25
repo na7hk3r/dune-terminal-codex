@@ -1,40 +1,33 @@
 use std::path::Path;
 
+fn capitalize(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 pub fn guess_book_title(path: &Path) -> String {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Unknown");
 
-    let cleaned = stem.replace('_', " ").replace('-', " ");
+    let cleaned = stem.replace(['_', '-'], " ");
 
     let title_case: Vec<String> = cleaned
         .split_whitespace()
         .enumerate()
         .map(|(i, word)| {
             let lower = word.to_lowercase();
-            match (i, lower.as_str()) {
-                (0, _) => {
-                    let mut chars = lower.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(c) => {
-                            let upper: String = c.to_uppercase().collect();
-                            upper + &chars.as_str()
-                        }
-                    }
+            match lower.as_str() {
+                "the" | "a" | "an" | "of" | "and" | "in" | "on" | "at" | "to" | "for"
+                    if i > 0 =>
+                {
+                    lower
                 }
-                (_, "the" | "a" | "an" | "of" | "and" | "in" | "on" | "at" | "to" | "for") => lower,
-                _ => {
-                    let mut chars = lower.chars();
-                    match chars.next() {
-                        None => String::new(),
-                        Some(c) => {
-                            let upper: String = c.to_uppercase().collect();
-                            upper + &chars.as_str()
-                        }
-                    }
-                }
+                _ => capitalize(&lower),
             }
         })
         .collect();

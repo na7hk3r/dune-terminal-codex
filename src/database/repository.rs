@@ -1,7 +1,6 @@
 use rusqlite::{Connection, params};
 use std::path::Path;
 
-use crate::config::settings::Config;
 use crate::database::migrations::run_migrations;
 
 pub struct Database {
@@ -19,8 +18,8 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn open_default(_config: &Config) -> anyhow::Result<Self> {
-        Self::open(&Config::db_path()?)
+    pub fn open_default() -> anyhow::Result<Self> {
+        Self::open(&crate::config::settings::Config::db_path()?)
     }
 
     pub fn book_count(&self) -> anyhow::Result<u64> {
@@ -53,7 +52,12 @@ impl Database {
             .unwrap_or(0u64))
     }
 
-    pub fn search_fts(&self, query: &str, limit: u32) -> anyhow::Result<Vec<SearchResult>> {
+    pub fn search_fts(
+        &self,
+        query: &str,
+        book: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<SearchResult>> {
         let sanitized: String = query
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_')
@@ -67,28 +71,41 @@ impl Database {
             .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(" AND ");
-        let mut stmt = self.conn.prepare(
+
+        let mut sql = String::from(
             "SELECT p.book_id, b.title, p.page_number, p.content,
                     highlight(pages_fts, 0, '>>>', '<<<') as highlighted
              FROM pages_fts
              JOIN pages p ON p.id = pages_fts.rowid
              JOIN books b ON b.id = p.book_id
-             WHERE pages_fts MATCH ?1
-             ORDER BY rank
-             LIMIT ?2",
-        )?;
+             WHERE pages_fts MATCH ?1",
+        );
+        if book.is_some() {
+            sql.push_str(" AND LOWER(b.title) LIKE ?3");
+        }
+        sql.push_str(" ORDER BY rank LIMIT ?2");
 
-        let results = stmt
-            .query_map(params![fts_query, limit], |row| {
-                Ok(SearchResult {
-                    book_id: row.get(0)?,
-                    book_title: row.get(1)?,
-                    page_number: row.get(2)?,
-                    content: row.get(3)?,
-                    highlighted: row.get(4)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
+        let map_row = |row: &rusqlite::Row| {
+            Ok(SearchResult {
+                book_id: row.get(0)?,
+                book_title: row.get(1)?,
+                page_number: row.get(2)?,
+                content: row.get(3)?,
+                highlighted: row.get(4)?,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let results = match book {
+            Some(filter) => {
+                let pattern = format!("%{}%", filter.to_lowercase());
+                stmt.query_map(params![fts_query, limit, pattern], map_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            None => stmt
+                .query_map(params![fts_query, limit], map_row)?
+                .collect::<Result<Vec<_>, _>>()?,
+        };
 
         Ok(results)
     }
@@ -222,7 +239,7 @@ impl Database {
         Ok(results)
     }
 
-    pub fn random_quote(&self) -> anyhow::Result<Option<(String, Option<String>, Option<String>)>> {
+    pub fn random_quote(&self) -> anyhow::Result<Option<QuoteRow>> {
         let result = self.conn.query_row(
             "SELECT text, attribution, book_title FROM quotes ORDER BY RANDOM() LIMIT 1",
             [],
@@ -259,6 +276,9 @@ pub struct SearchResult {
     pub highlighted: String,
 }
 
+/// `(text, attribution, book_title)` as returned by `random_quote`.
+pub type QuoteRow = (String, Option<String>, Option<String>);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,9 +305,35 @@ mod tests {
         db.insert_page(book_id, 1, "The spice must flow").unwrap();
         db.insert_page(book_id, 2, "Fear is the mind-killer")
             .unwrap();
-        let results = db.search_fts("spice", 10).unwrap();
+        let results = db.search_fts("spice", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("spice"));
+    }
+
+    #[test]
+    fn search_fts_filters_by_book() {
+        let db = test_db();
+        let dune = db.insert_book("Dune", "/tmp/dune.pdf", 10, 100, 1).unwrap();
+        let messiah = db
+            .insert_book("Dune Messiah", "/tmp/messiah.pdf", 10, 100, 1)
+            .unwrap();
+        db.insert_page(dune, 1, "the spice must flow").unwrap();
+        db.insert_page(messiah, 1, "the spice must flow").unwrap();
+
+        // No filter: both books match.
+        assert_eq!(db.search_fts("spice", None, 10).unwrap().len(), 2);
+
+        // Partial, case-insensitive filter keeps only the matching book.
+        let filtered = db.search_fts("spice", Some("messiah"), 10).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].book_title, "Dune Messiah");
+
+        // A filter that matches nothing returns no results.
+        assert!(
+            db.search_fts("spice", Some("god emperor"), 10)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -320,7 +366,7 @@ mod tests {
         )
         .unwrap();
 
-        let results = db.search_fts("spice", 10).unwrap();
+        let results = db.search_fts("spice", None, 10).unwrap();
         assert!(results.len() >= 2);
         // bm25: denser match ranks first regardless of insertion order.
         assert_eq!(

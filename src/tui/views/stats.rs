@@ -54,22 +54,38 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .border_style(Theme::accent_style())
         .title(Span::styled(" 📜 Codex ", Theme::title_style()));
 
+    let counts = app.codex_counts;
     let codex_lines = vec![
         Line::from(""),
         Line::from(Span::styled("  Characters: ", Theme::dim_style())),
-        Line::from(Span::styled("    27", Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(counts.characters)),
+            Theme::text_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled("  Houses:     ", Theme::dim_style())),
-        Line::from(Span::styled("    9", Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(counts.houses)),
+            Theme::text_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled("  Planets:    ", Theme::dim_style())),
-        Line::from(Span::styled("    12", Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(counts.planets)),
+            Theme::text_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled("  Glossary:   ", Theme::dim_style())),
-        Line::from(Span::styled("    30", Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(counts.glossary)),
+            Theme::text_style(),
+        )),
         Line::from(""),
         Line::from(Span::styled("  Quotes:     ", Theme::dim_style())),
-        Line::from(Span::styled("    17", Theme::text_style())),
+        Line::from(Span::styled(
+            format!("    {}", format_number(counts.quotes)),
+            Theme::text_style(),
+        )),
     ];
 
     let codex = Paragraph::new(codex_lines)
