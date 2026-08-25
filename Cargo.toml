@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Dune Terminal Codex — A Codex of Arrakis in your terminal"
 license = "MIT"
-repository = "https://github.com/user/dune-terminal-codex"
+repository = "https://github.com/na7hk3r/dune-terminal-codex"
 
 [[bin]]
 name = "dune"

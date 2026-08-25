@@ -1,9 +1,24 @@
 # Dune Terminal Codex
 
-An offline encyclopedia of the Dune universe for your terminal. Index your
-personal PDF collection of the saga, search it full-text (FTS5 with bm25
-relevance ranking), browse a codex of characters / houses / planets /
-glossary imported from a wiki, and receive wisdom from the Oracle.
+An encyclopedia of the Dune universe that lives in your terminal.
+
+I watched the movie, bought book six, and discovered I had no idea who anyone
+was. I spent more time juggling wiki tabs than actually reading. So instead of
+just keeping a browser tab open like a normal person, I built a SQLite
+full-text index, a TUI, and an Oracle. Peak over-engineering. Now other fans
+can profit from my complete lack of restraint.
+
+## What it does
+
+- Indexes your personal PDF collection of the saga for full-text search
+  (FTS5 with bm25 relevance ranking).
+- Populates a codex of characters, Great Houses, planets and glossary terms
+  from a Dune wiki.
+- Dispenses quotes and random wisdom via the Oracle.
+- Works as an interactive TUI (`dune`) and as plain CLI commands.
+
+Everything runs locally against your own files; the only step that touches the
+network is the codex import.
 
 Built with Rust, `ratatui` 0.30 and `rusqlite`.
 
@@ -24,19 +39,23 @@ cargo build --release
 
 ```sh
 dune config        # create the default config (~/.config/dune/config.toml)
+```
+
+Edit `[library] paths` in `~/.config/dune/config.toml` to point at your PDFs
+(it defaults to `~/Books/Dune`), and `[reader] command` to change the PDF
+viewer. Then:
+
+```sh
 dune index         # scan library paths and index every PDF (full-text)
 dune import-codex  # fetch characters, houses, planets and glossary
 ```
-
-Edit `[library] paths` in the config file to point at your PDFs, and
-`[reader] command` to change the PDF viewer.
 
 ## Command reference
 
 | Command                  | Description                                        |
 |--------------------------|----------------------------------------------------|
 | `dune` / `dune tui`      | Launch the interactive TUI                         |
-| `dune search <query>`    | Full-text search across indexed books              |
+| `dune search <query> [--book <name>]` | Full-text search, optionally filtered by book |
 | `dune books`             | List indexed books                                 |
 | `dune book <name>`       | Show details of one book                           |
 | `dune character <name>`  | Codex entry for a character                        |
@@ -49,7 +68,7 @@ Edit `[library] paths` in the config file to point at your PDFs, and
 | `dune index [--rebuild] [--verbose] [--file <pdf>...]` | Index/reindex PDFs |
 | `dune import-codex`      | Import/refresh codex data (idempotent re-import)   |
 | `dune config`            | Show configuration location and contents           |
-| `dune open <path\|id> [--page N]` | Open a PDF at a page (by path or book id) |
+| `dune open <path> [--page N]` | Open a PDF at a page                          |
 
 ## TUI keybindings
 
@@ -67,3 +86,21 @@ Edit `[library] paths` in the config file to point at your PDFs, and
 
 In a Codex detail view: `j/k` scroll line by line, `PgUp/PgDn` by page,
 `g/G` jump to top/bottom; the footer shows the current line position.
+
+## Configuration
+
+Config file: `~/.config/dune/config.toml` (created by `dune config`).
+
+| Key                    | Default            | Purpose                          |
+|------------------------|--------------------|----------------------------------|
+| `[library] paths`      | `["~/Books/Dune"]` | Folders scanned by `dune index`  |
+| `[reader] command`     | `"okular"`         | PDF viewer used by `dune open`   |
+| `[reader] args`        | `[]`               | Extra arguments for the viewer   |
+| `[codex] wiki_url`     | Dune wiki API      | Source used by `dune import-codex` |
+
+The database lives at `~/.local/share/dune/dune.db`; delete it (or run
+`dune index --rebuild`) to start over.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
