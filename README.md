@@ -8,6 +8,8 @@ just keeping a browser tab open like a normal person, I built a SQLite
 full-text index, a TUI, and an Oracle. Peak over-engineering. Now other fans
 can profit from my complete lack of restraint.
 
+![Dune Terminal Codex TUI](dune-screenshot.png)
+
 ## What it does
 
 - Indexes your personal PDF collection of the saga for full-text search
