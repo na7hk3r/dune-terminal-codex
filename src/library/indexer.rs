@@ -40,7 +40,14 @@ pub fn index_library(db: &Database, config: &Config, verbose: bool) -> anyhow::R
         }
 
         for pdf_path in &pdfs {
-            match index_pdf(db, pdf_path, verbose) {
+            // Store a path relative to the configured library root so the
+            // database stays portable between machines and folder layouts.
+            let stored: String = pdf_path
+                .strip_prefix(dir)
+                .map(|rel| rel.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| pdf_path.to_string_lossy().into_owned());
+
+            match index_pdf(db, pdf_path, &stored, verbose) {
                 Ok((pages, _book_id)) => {
                     result.books_indexed += 1;
                     result.pages_indexed += pages;
@@ -60,7 +67,12 @@ pub fn index_library(db: &Database, config: &Config, verbose: bool) -> anyhow::R
     Ok(result)
 }
 
-pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u32, i64)> {
+pub fn index_pdf(
+    db: &Database,
+    path: &Path,
+    stored_path: &str,
+    verbose: bool,
+) -> anyhow::Result<(u32, i64)> {
     let info = pdf::pdf_info(path)?;
     // Prefer the PDF's embedded title; fall back to guessing from the filename.
     let title = info.title.unwrap_or_else(|| guess_book_title(path));
@@ -69,13 +81,7 @@ pub fn index_pdf(db: &Database, path: &Path, verbose: bool) -> anyhow::Result<(u
     let metadata = std::fs::metadata(path)?;
     let file_size = metadata.len() as i64;
 
-    let book_id = db.insert_book(
-        &title,
-        &path.to_string_lossy(),
-        page_count,
-        0,
-        file_size,
-    )?;
+    let book_id = db.insert_book(&title, stored_path, page_count, 0, file_size)?;
 
     let mut total_words: u32 = 0;
 

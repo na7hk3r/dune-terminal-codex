@@ -320,7 +320,7 @@ fn cmd_index(rebuild: bool, verbose: bool, files: Option<Vec<String>>) -> anyhow
                 println!("File not found: {}", file_path);
                 continue;
             }
-            match library::indexer::index_pdf(&db, path, verbose) {
+            match library::indexer::index_pdf(&db, path, file_path, verbose) {
                 Ok((pages, _book_id)) => {
                     println!("Indexed: {} ({} pages)", file_path, pages);
                 }
@@ -382,19 +382,42 @@ fn cmd_config() -> anyhow::Result<()> {
 
 fn cmd_open(target: &str, page: Option<u32>) -> anyhow::Result<()> {
     let config = Config::load_or_default();
+    let roots = config.resolve_library_paths();
 
     // Numeric target: resolve the book from the database by id.
     if let Ok(id) = target.trim().parse::<i64>() {
         let db = open_database()?;
         match db.book_path_by_id(id)? {
-            Some(path) => {
-                return yazi::integration::open_pdf(&path, page, &config.reader.command);
+            Some(stored) => {
+                let resolved = library::resolver::resolve_file_path(&stored, &roots).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "PDF not found. Run `dune index` from a configured library path.\n  stored: {stored}"
+                        )
+                    },
+                )?;
+                return yazi::integration::open_pdf(
+                    &resolved.to_string_lossy(),
+                    page,
+                    &config.reader.command,
+                );
             }
             None => {
                 println!("No book with id {}. Run `dune books` to list ids.", id);
                 return Ok(());
             }
         }
+    }
+
+    if !std::path::Path::new(target).exists() {
+        if let Some(resolved) = library::resolver::resolve_file_path(target, &roots) {
+            return yazi::integration::open_pdf(
+                &resolved.to_string_lossy(),
+                page,
+                &config.reader.command,
+            );
+        }
+        anyhow::bail!("file not found: {}", target);
     }
 
     yazi::integration::open_pdf(target, page, &config.reader.command)?;

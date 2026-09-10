@@ -3,6 +3,7 @@ use crate::database::repository::{Database, SearchResult};
 use crate::oracle::engine::OracleEngine;
 use crate::yazi::integration::open_pdf;
 use std::cell::Cell;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -115,6 +116,8 @@ pub struct App {
     pub codex_sub_tab: CodexSubTab,
     /// PDF viewer command from `[reader]` in the config.
     pub reader_command: String,
+    /// Folders where indexed PDFs live, from `[library] paths` in the config.
+    pub library_paths: Vec<PathBuf>,
 
     pub books: Vec<(String, String, u32, u32)>,
     pub selected_book: usize,
@@ -149,6 +152,7 @@ impl App {
             active_tab: ActiveTab::Home,
             codex_sub_tab: CodexSubTab::Characters,
             reader_command: config.reader.command.clone(),
+            library_paths: config.resolve_library_paths(),
             books,
             selected_book: 0,
             search_input: String::new(),
@@ -460,13 +464,21 @@ impl App {
         }
     }
 
+    fn resolve_pdf(&self, stored: &str) -> anyhow::Result<PathBuf> {
+        crate::library::resolver::resolve_file_path(stored, &self.library_paths)
+            .ok_or_else(|| {
+                anyhow::anyhow!("PDF not found. Run `dune index` from a configured library path.\n  stored: {stored}")
+            })
+    }
+
     pub fn open_selected_book(&self) -> anyhow::Result<()> {
         if self.active_tab != ActiveTab::Library || self.books.is_empty() {
             return Ok(());
         }
         let (_, path, page, _) = &self.books[self.selected_book];
+        let resolved = self.resolve_pdf(path)?;
         let page_num = if *page > 0 { Some(*page) } else { None };
-        open_pdf(path, page_num, &self.reader_command)
+        open_pdf(&resolved.to_string_lossy(), page_num, &self.reader_command)
     }
 
     pub fn open_search_result(&self, db: &Database) -> anyhow::Result<()> {
@@ -489,6 +501,7 @@ impl App {
             )
             .map_err(|e| anyhow::anyhow!("book not found: {}", e))?;
 
-        open_pdf(&file_path, page_num, &self.reader_command)
+        let resolved = self.resolve_pdf(&file_path)?;
+        open_pdf(&resolved.to_string_lossy(), page_num, &self.reader_command)
     }
 }
