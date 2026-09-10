@@ -105,6 +105,17 @@ CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
 END;
 ";
 
+pub const MIGRATION_11_SOURCE_URL: &str = "
+ALTER TABLE characters ADD COLUMN source_url TEXT;
+ALTER TABLE houses ADD COLUMN source_url TEXT;
+ALTER TABLE planets ADD COLUMN source_url TEXT;
+ALTER TABLE glossary ADD COLUMN source_url TEXT;
+
+UPDATE characters
+SET source_url = aliases, aliases = NULL
+WHERE source_url IS NULL AND aliases LIKE 'http%';
+";
+
 pub const CREATE_MIGRATIONS: &str = "
 CREATE TABLE IF NOT EXISTS migrations (
     version INTEGER PRIMARY KEY,
@@ -122,4 +133,5 @@ pub const ALL_MIGRATIONS: &[(&str, &str)] = &[
     ("8", CREATE_QUOTES),
     ("9", CREATE_SEARCH_INDEX),
     ("10", CREATE_FTS_SYNC),
+    ("11", MIGRATION_11_SOURCE_URL),
 ];

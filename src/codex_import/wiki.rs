@@ -8,10 +8,14 @@ use tracing::{info, warn};
 use super::clean::clean_entity_text;
 
 #[derive(Deserialize)]
-struct WikiResponse {
-    description: String,
-    wiki: String,
+pub struct WikiResponse {
+    pub description: String,
+    pub wiki: String,
 }
+
+/// The network strategy for fetching a single wiki term, injectable so the
+/// importer can be tested without HTTP.
+pub type Fetcher = fn(base_url: &str, term: &str) -> Result<WikiResponse>;
 
 const CHARACTERS: &[&str] = &[
     "paul_atreides",
@@ -106,7 +110,7 @@ const GLOSSARY_TERMS: &[&str] = &[
     "butlerian_jihad",
 ];
 
-fn fetch_term(base_url: &str, term: &str) -> Result<WikiResponse> {
+pub fn fetch_term(base_url: &str, term: &str) -> Result<WikiResponse> {
     let url = format!("{}/dune/{}", base_url, term);
     let response: WikiResponse = ureq::get(&url)
         .call()
@@ -117,7 +121,7 @@ fn fetch_term(base_url: &str, term: &str) -> Result<WikiResponse> {
     Ok(response)
 }
 
-pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
+pub fn import_from_wiki(conn: &Connection, base_url: &str, fetch: Fetcher) -> Result<()> {
     info!("Starting codex import from {}", base_url);
 
     let mut imported = 0u32;
@@ -125,12 +129,12 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
 
     info!("Importing characters...");
     for term in CHARACTERS {
-        match fetch_term(base_url, term) {
+        match fetch(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
                     let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
-                        "INSERT OR REPLACE INTO characters (name, description, source, aliases)
+                        "INSERT OR REPLACE INTO characters (name, description, source, source_url)
                          VALUES (?1, ?2, 'wiki', ?3)",
                         rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
                     )?;
@@ -148,14 +152,14 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
 
     info!("Importing houses...");
     for term in HOUSES {
-        match fetch_term(base_url, term) {
+        match fetch(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
                     let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
-                        "INSERT OR REPLACE INTO houses (name, description, source)
-                         VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![term.replace('_', " "), description.as_str()],
+                        "INSERT OR REPLACE INTO houses (name, description, source, source_url)
+                         VALUES (?1, ?2, 'wiki', ?3)",
+                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
                     )?;
                     imported += 1;
                     info!("  house: {}", term);
@@ -171,14 +175,14 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
 
     info!("Importing planets...");
     for term in PLANETS {
-        match fetch_term(base_url, term) {
+        match fetch(base_url, term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
                     let description = clean_entity_text(&term.replace('_', " "), &resp.description);
                     conn.execute(
-                        "INSERT OR REPLACE INTO planets (name, description, source)
-                         VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![term.replace('_', " "), description.as_str()],
+                        "INSERT OR REPLACE INTO planets (name, description, source, source_url)
+                         VALUES (?1, ?2, 'wiki', ?3)",
+                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
                     )?;
                     imported += 1;
                     info!("  planet: {}", term);
@@ -195,15 +199,15 @@ pub fn import_from_wiki(conn: &Connection, base_url: &str) -> Result<()> {
     info!("Importing glossary...");
     for term in GLOSSARY_TERMS {
         let clean_term = term.trim();
-        match fetch_term(base_url, clean_term) {
+        match fetch(base_url, clean_term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
                     let description =
                         clean_entity_text(&clean_term.replace('_', " "), &resp.description);
                     conn.execute(
-                        "INSERT OR REPLACE INTO glossary (term, definition, source)
-                         VALUES (?1, ?2, 'wiki')",
-                        rusqlite::params![clean_term.replace('_', " "), description.as_str()],
+                        "INSERT OR REPLACE INTO glossary (term, definition, source, source_url)
+                         VALUES (?1, ?2, 'wiki', ?3)",
+                        rusqlite::params![clean_term.replace('_', " "), description.as_str(), resp.wiki],
                     )?;
                     imported += 1;
                     info!("  glossary: {}", clean_term);
@@ -307,4 +311,65 @@ fn add_builtin_quotes(conn: &Connection) -> Result<()> {
 
     info!("Added {} builtin quotes", quotes.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub_fetcher(base_url: &str, term: &str) -> Result<WikiResponse> {
+        Ok(WikiResponse {
+            description: format!("A detailed entry about the term {}.", term),
+            wiki: format!("{}/dune/{}", base_url, term),
+        })
+    }
+
+    #[test]
+    fn import_writes_source_url_and_self_heals_legacy_alias_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::migrations::run_migrations(&conn).unwrap();
+
+        // A legacy row from the pre-migration-11 schema: the wiki URL lives in
+        // aliases and source_url does not exist at insert time.
+        conn.execute(
+            "INSERT INTO characters (name, aliases) VALUES (?1, ?2)",
+            rusqlite::params![
+                "paul atreides",
+                "https://dune.fandom.com/wiki/paul_atreides"
+            ],
+        )
+        .unwrap();
+
+        import_from_wiki(&conn, "https://stub.local", stub_fetcher).unwrap();
+
+        let (url, aliases): (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT source_url, aliases FROM characters WHERE name = ?1",
+                ["paul atreides"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            url.as_deref(),
+            Some("https://stub.local/dune/paul_atreides"),
+            "re-import must write the wiki URL into source_url"
+        );
+        assert_eq!(
+            aliases, None,
+            "INSERT OR REPLACE must clear the legacy aliases column (self-heal)"
+        );
+
+        let url: Option<String> = conn
+            .query_row(
+                "SELECT source_url FROM houses WHERE name = ?1",
+                ["house atreides"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            url.as_deref(),
+            Some("https://stub.local/dune/house_atreides"),
+            "houses must receive source_url too"
+        );
+    }
 }

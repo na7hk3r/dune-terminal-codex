@@ -351,7 +351,11 @@ fn cmd_import_codex() -> anyhow::Result<()> {
     let db = open_database()?;
     println!("Importing codex data...");
 
-    codex_import::wiki::import_from_wiki(&db.conn, &Config::load_or_default().codex.wiki_url)?;
+    codex_import::wiki::import_from_wiki(
+        &db.conn,
+        &Config::load_or_default().codex.wiki_url,
+        codex_import::wiki::fetch_term,
+    )?;
 
     println!("Codex import complete.");
     Ok(())
