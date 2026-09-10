@@ -471,14 +471,23 @@ impl App {
             })
     }
 
+    /// Resolves the PDF and the page to open for the library's selected book.
+    ///
+    /// Books always open at page 1: the stored `page_count` is never passed to
+    /// the viewer (it is a total, not a position). The viewer default handles
+    /// page 1, so the page is always `None`.
+    fn selected_book_open_target(&self) -> anyhow::Result<(String, Option<u32>)> {
+        let (_, path, _page_count, _) = &self.books[self.selected_book];
+        let resolved = self.resolve_pdf(path)?;
+        Ok((resolved.to_string_lossy().to_string(), None))
+    }
+
     pub fn open_selected_book(&self) -> anyhow::Result<()> {
         if self.active_tab != ActiveTab::Library || self.books.is_empty() {
             return Ok(());
         }
-        let (_, path, page, _) = &self.books[self.selected_book];
-        let resolved = self.resolve_pdf(path)?;
-        let page_num = if *page > 0 { Some(*page) } else { None };
-        open_pdf(&resolved.to_string_lossy(), page_num, &self.reader_command)
+        let (path, page_num) = self.selected_book_open_target()?;
+        open_pdf(&path, page_num, &self.reader_command)
     }
 
     pub fn open_search_result(&self, db: &Database) -> anyhow::Result<()> {
@@ -503,5 +512,49 @@ impl App {
 
         let resolved = self.resolve_pdf(&file_path)?;
         open_pdf(&resolved.to_string_lossy(), page_num, &self.reader_command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::settings::Config;
+    use crate::database::repository::Database;
+    use std::path::Path;
+
+    fn app_with_book(page_count: u32) -> (tempfile::TempDir, App) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pdf = tmp.path().join("dune.pdf");
+        std::fs::write(&pdf, b"%PDF-1.4").unwrap();
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        db.insert_book("Dune", pdf.to_str().unwrap(), page_count, 200000, 1024)
+            .unwrap();
+        let mut config = Config::default();
+        config.library.paths = vec![tmp.path().to_string_lossy().to_string()];
+        config.reader.command = "true".to_string();
+        let mut app = App::new(&db, &config);
+        app.active_tab = ActiveTab::Library;
+        (tmp, app)
+    }
+
+    #[test]
+    fn library_book_never_opens_at_stored_page_count() {
+        let (_tmp, app) = app_with_book(412);
+        let (_, page) = app.selected_book_open_target().unwrap();
+        assert_eq!(page, None, "page_count 412 must never become the open page");
+    }
+
+    #[test]
+    fn single_page_book_also_opens_at_page_one() {
+        let (_tmp, app) = app_with_book(1);
+        let (_, page) = app.selected_book_open_target().unwrap();
+        assert_eq!(page, None);
+    }
+
+    #[test]
+    fn library_open_target_resolves_existing_pdf_path() {
+        let (tmp, app) = app_with_book(412);
+        let (path, _) = app.selected_book_open_target().unwrap();
+        assert_eq!(path, tmp.path().join("dune.pdf").to_string_lossy());
     }
 }

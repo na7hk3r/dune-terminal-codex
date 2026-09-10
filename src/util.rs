@@ -81,6 +81,114 @@ pub fn truncate_ellipsis(s: &str, max_chars: usize) -> String {
     result
 }
 
+/// A span of a search snippet: either plain text (`matched: false`) or a
+/// highlighted match (`matched: true`), decoded from the FTS5 `>>>`/`<<<`
+/// highlight markers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightSegment {
+    pub text: String,
+    pub matched: bool,
+}
+
+/// Removes FTS5 highlight markers (`>>>` and `<<<`) from `s`.
+///
+/// Standalone `>`/`<` runs shorter than 3 chars are kept, except for a
+/// trailing run at the very end of the string: that is a marker cut by
+/// truncation, and it is dropped so no dangling marker is shown.
+pub fn strip_markers(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '>' || c == '<' {
+            let mut j = i;
+            while j < chars.len() && chars[j] == c {
+                j += 1;
+            }
+            let run = j - i;
+            if run >= 3 || j == chars.len() {
+                // Full marker, or a dangling partial marker at the end.
+                i = j;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Truncates a highlighted snippet to at most `max_chars` characters, strips
+/// the FTS5 markers, and appends `…` when anything was cut. A marker cut by
+/// the truncation (a dangling `>`/`<` run) is dropped by [`strip_markers`].
+pub fn truncate_snippet(highlighted: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let truncated: String = highlighted.chars().take(max_chars).collect();
+    let stripped = strip_markers(&truncated);
+    if highlighted.chars().count() > max_chars {
+        format!("{}…", stripped)
+    } else {
+        stripped
+    }
+}
+
+/// Parses FTS5 highlight markers (`>>>` starts a match, `<<<` ends it) into
+/// segments: plain text with `matched: false` and matches with `matched:
+/// true`. A partial marker run at the end of the string (a truncation cut)
+/// is dropped instead of becoming visible text.
+pub fn marker_segments(s: &str) -> Vec<HighlightSegment> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut segments: Vec<HighlightSegment> = Vec::new();
+    let mut buf = String::new();
+    let mut matched = false;
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '>' || chars[i] == '<' {
+            let c = chars[i];
+            let mut j = i;
+            while j < chars.len() && chars[j] == c {
+                j += 1;
+            }
+            let run = j - i;
+            if run >= 3 {
+                if !buf.is_empty() {
+                    segments.push(HighlightSegment {
+                        text: std::mem::take(&mut buf),
+                        matched,
+                    });
+                }
+                matched = c == '>';
+                i = j;
+                continue;
+            }
+            if j == chars.len() {
+                // Dangling partial marker from a truncation cut: drop it.
+                break;
+            }
+            // Short run inside the text: keep as literal characters.
+            for _ in 0..run {
+                buf.push(c);
+            }
+            i = j;
+            continue;
+        }
+        buf.push(chars[i]);
+        i += 1;
+    }
+
+    if !buf.is_empty() {
+        segments.push(HighlightSegment {
+            text: buf,
+            matched,
+        });
+    }
+    segments
+}
+
 /// Reduces a string to lowercase ASCII alphanumerics, so titles can be
 /// compared against filename stems regardless of punctuation/spacing.
 pub fn slugify(s: &str) -> String {
@@ -135,6 +243,136 @@ pub fn oracle_box(wisdom: &str, source: Option<&str>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_markers_passthrough_without_markers() {
+        assert_eq!(strip_markers("The spice must flow"), "The spice must flow");
+        assert_eq!(strip_markers(""), "");
+    }
+
+    #[test]
+    fn strip_markers_removes_full_markers() {
+        assert_eq!(strip_markers("the >>>spice<<< must flow"), "the spice must flow");
+        assert_eq!(strip_markers(">>>spice<<<"), "spice");
+    }
+
+    #[test]
+    fn strip_markers_removes_multiple_markers() {
+        assert_eq!(
+            strip_markers(">>>one<<< and >>>two<<<"),
+            "one and two"
+        );
+    }
+
+    #[test]
+    fn strip_markers_keeps_lone_marker_chars_inside_text() {
+        assert_eq!(strip_markers("a > b and a < b"), "a > b and a < b");
+        assert_eq!(strip_markers("arrow -> next"), "arrow -> next");
+    }
+
+    #[test]
+    fn strip_markers_drops_dangling_partial_marker_at_end() {
+        // Truncation can cut `>>>`/`<<<` to `>` or `>>` at the string end.
+        assert_eq!(strip_markers("spice >>"), "spice ");
+        assert_eq!(strip_markers("spice <<"), "spice ");
+        assert_eq!(strip_markers("spice >"), "spice ");
+        assert_eq!(strip_markers("spice <"), "spice ");
+    }
+
+    #[test]
+    fn truncate_snippet_passthrough_when_short_enough() {
+        assert_eq!(truncate_snippet("spice >>>must flow<<<", 100), "spice must flow");
+        assert_eq!(truncate_snippet("", 100), "");
+    }
+
+    #[test]
+    fn truncate_snippet_cuts_at_marker_boundary() {
+        // 13 chars: "spice " + ">>>" + "must"; stripping leaves a clean cut.
+        assert_eq!(
+            truncate_snippet("spice >>>must flow<<<", 13),
+            "spice must…"
+        );
+    }
+
+    #[test]
+    fn truncate_snippet_drops_dangling_marker_at_cut() {
+        // 9 chars: "spice >>" — the partial `>>` is dropped, no dangling marker.
+        assert_eq!(truncate_snippet("spice >>>must flow<<<", 9), "spice …");
+    }
+
+    #[test]
+    fn truncate_snippet_zero_max_returns_empty() {
+        assert_eq!(truncate_snippet("spice >>>must<<<", 0), "");
+    }
+
+    #[test]
+    fn marker_segments_single_plain_text() {
+        assert_eq!(
+            marker_segments("no markers here"),
+            vec![HighlightSegment {
+                text: "no markers here".to_string(),
+                matched: false
+            }]
+        );
+    }
+
+    #[test]
+    fn marker_segments_empty_string() {
+        assert_eq!(marker_segments(""), Vec::<HighlightSegment>::new());
+    }
+
+    #[test]
+    fn marker_segments_single_match() {
+        assert_eq!(
+            marker_segments("the >>>spice<<< must flow"),
+            vec![
+                HighlightSegment { text: "the ".to_string(), matched: false },
+                HighlightSegment { text: "spice".to_string(), matched: true },
+                HighlightSegment { text: " must flow".to_string(), matched: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn marker_segments_multiple_matches() {
+        assert_eq!(
+            marker_segments("a >>>b<<< c >>>d<<< e"),
+            vec![
+                HighlightSegment { text: "a ".to_string(), matched: false },
+                HighlightSegment { text: "b".to_string(), matched: true },
+                HighlightSegment { text: " c ".to_string(), matched: false },
+                HighlightSegment { text: "d".to_string(), matched: true },
+                HighlightSegment { text: " e".to_string(), matched: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn marker_segments_drops_dangling_marker_at_end() {
+        // A truncation cut inside `>>>` leaves `>>`; it must not become text.
+        assert_eq!(
+            marker_segments("the >>"),
+            vec![HighlightSegment { text: "the ".to_string(), matched: false }]
+        );
+        assert_eq!(
+            marker_segments("the >>>spice<<"),
+            vec![
+                HighlightSegment { text: "the ".to_string(), matched: false },
+                HighlightSegment { text: "spice".to_string(), matched: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn marker_segments_unclosed_start_marker_marks_tail_as_matched() {
+        assert_eq!(
+            marker_segments("spice >>>must flow"),
+            vec![
+                HighlightSegment { text: "spice ".to_string(), matched: false },
+                HighlightSegment { text: "must flow".to_string(), matched: true },
+            ]
+        );
+    }
 
     #[test]
     fn format_number_basic() {

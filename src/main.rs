@@ -70,8 +70,8 @@ fn cmd_search(query: &str, book: Option<&str>) -> anyhow::Result<()> {
         println!("\n{}", result.book_title.to_uppercase());
         println!("Page {}", result.page_number);
         println!();
-        let snippet: String = result.highlighted.chars().take(200).collect();
-        println!("  {}...", snippet.trim());
+        let snippet = util::truncate_snippet(&result.highlighted, 120);
+        println!("  {}", snippet.trim());
         if i < results.len() - 1 {
             println!();
         }
@@ -351,7 +351,11 @@ fn cmd_import_codex() -> anyhow::Result<()> {
     let db = open_database()?;
     println!("Importing codex data...");
 
-    codex_import::wiki::import_from_wiki(&db.conn, &Config::load_or_default().codex.wiki_url)?;
+    codex_import::wiki::import_from_wiki(
+        &db.conn,
+        &Config::load_or_default().codex.wiki_url,
+        codex_import::wiki::fetch_term,
+    )?;
 
     println!("Codex import complete.");
     Ok(())
