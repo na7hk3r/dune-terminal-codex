@@ -70,8 +70,8 @@ fn cmd_search(query: &str, book: Option<&str>) -> anyhow::Result<()> {
         println!("\n{}", result.book_title.to_uppercase());
         println!("Page {}", result.page_number);
         println!();
-        let snippet: String = result.highlighted.chars().take(200).collect();
-        println!("  {}...", snippet.trim());
+        let snippet = util::truncate_snippet(&result.highlighted, 120);
+        println!("  {}", snippet.trim());
         if i < results.len() - 1 {
             println!();
         }
