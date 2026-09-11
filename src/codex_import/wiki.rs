@@ -17,6 +17,14 @@ pub struct WikiResponse {
 /// importer can be tested without HTTP.
 pub type Fetcher = fn(base_url: &str, term: &str) -> Result<WikiResponse>;
 
+/// Describes one entity type for the shared wiki import path (D8).
+#[derive(Debug, Clone, Copy)]
+pub struct WikiKind {
+    pub table: &'static str,
+    pub name_col: &'static str,
+    pub desc_col: &'static str,
+}
+
 const CHARACTERS: &[&str] = &[
     "paul_atreides",
     "leto_atreides_i",
@@ -121,112 +129,104 @@ pub fn fetch_term(base_url: &str, term: &str) -> Result<WikiResponse> {
     Ok(response)
 }
 
-pub fn import_from_wiki(conn: &Connection, base_url: &str, fetch: Fetcher) -> Result<()> {
-    info!("Starting codex import from {}", base_url);
-
+/// Shared import loop for one entity type (D8).
+/// Returns `(imported_count, errors)`.
+fn import_kind(
+    conn: &Connection,
+    base_url: &str,
+    spec: WikiKind,
+    terms: &[&str],
+    fetch: Fetcher,
+) -> (u32, Vec<String>) {
     let mut imported = 0u32;
     let mut errors = Vec::new();
+    let kind_label = spec.table;
 
-    info!("Importing characters...");
-    for term in CHARACTERS {
-        match fetch(base_url, term) {
-            Ok(resp) => {
-                if resp.description.len() > 10 {
-                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
-                    conn.execute(
-                        "INSERT OR REPLACE INTO characters (name, description, source, source_url)
-                         VALUES (?1, ?2, 'wiki', ?3)",
-                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
-                    )?;
-                    imported += 1;
-                    info!("  character: {}", term);
-                }
-            }
-            Err(e) => {
-                warn!("  failed: {} - {}", term, e);
-                errors.push(format!("character {}: {}", term, e));
-            }
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    info!("Importing houses...");
-    for term in HOUSES {
-        match fetch(base_url, term) {
-            Ok(resp) => {
-                if resp.description.len() > 10 {
-                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
-                    conn.execute(
-                        "INSERT OR REPLACE INTO houses (name, description, source, source_url)
-                         VALUES (?1, ?2, 'wiki', ?3)",
-                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
-                    )?;
-                    imported += 1;
-                    info!("  house: {}", term);
-                }
-            }
-            Err(e) => {
-                warn!("  failed: {} - {}", term, e);
-                errors.push(format!("house {}: {}", term, e));
-            }
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    info!("Importing planets...");
-    for term in PLANETS {
-        match fetch(base_url, term) {
-            Ok(resp) => {
-                if resp.description.len() > 10 {
-                    let description = clean_entity_text(&term.replace('_', " "), &resp.description);
-                    conn.execute(
-                        "INSERT OR REPLACE INTO planets (name, description, source, source_url)
-                         VALUES (?1, ?2, 'wiki', ?3)",
-                        rusqlite::params![term.replace('_', " "), description.as_str(), resp.wiki],
-                    )?;
-                    imported += 1;
-                    info!("  planet: {}", term);
-                }
-            }
-            Err(e) => {
-                warn!("  failed: {} - {}", term, e);
-                errors.push(format!("planet {}: {}", term, e));
-            }
-        }
-        thread::sleep(Duration::from_millis(150));
-    }
-
-    info!("Importing glossary...");
-    for term in GLOSSARY_TERMS {
+    for term in terms {
         let clean_term = term.trim();
         match fetch(base_url, clean_term) {
             Ok(resp) => {
                 if resp.description.len() > 10 {
                     let description =
                         clean_entity_text(&clean_term.replace('_', " "), &resp.description);
-                    conn.execute(
-                        "INSERT OR REPLACE INTO glossary (term, definition, source, source_url)
+                    let sql = format!(
+                        "INSERT OR REPLACE INTO {} ({}, {}, source, source_url)
                          VALUES (?1, ?2, 'wiki', ?3)",
-                        rusqlite::params![clean_term.replace('_', " "), description.as_str(), resp.wiki],
-                    )?;
+                        spec.table, spec.name_col, spec.desc_col,
+                    );
+                    conn.execute(
+                        &sql,
+                        rusqlite::params![
+                            clean_term.replace('_', " "),
+                            description.as_str(),
+                            resp.wiki
+                        ],
+                    )
+                    .unwrap_or_else(|e| {
+                        warn!("  insert failed for {} {}: {}", kind_label, clean_term, e);
+                        0
+                    });
                     imported += 1;
-                    info!("  glossary: {}", clean_term);
+                    info!("  {}: {}", kind_label, clean_term);
                 }
             }
             Err(e) => {
                 warn!("  failed: {} - {}", clean_term, e);
-                errors.push(format!("glossary {}: {}", clean_term, e));
+                errors.push(format!("{} {}: {}", kind_label, clean_term, e));
             }
         }
         thread::sleep(Duration::from_millis(150));
+    }
+    (imported, errors)
+}
+
+const CHARACTERS_SPEC: WikiKind = WikiKind {
+    table: "characters",
+    name_col: "name",
+    desc_col: "description",
+};
+const HOUSES_SPEC: WikiKind = WikiKind {
+    table: "houses",
+    name_col: "name",
+    desc_col: "description",
+};
+const PLANETS_SPEC: WikiKind = WikiKind {
+    table: "planets",
+    name_col: "name",
+    desc_col: "description",
+};
+const GLOSSARY_SPEC: WikiKind = WikiKind {
+    table: "glossary",
+    name_col: "term",
+    desc_col: "definition",
+};
+
+pub fn import_from_wiki(conn: &Connection, base_url: &str, fetch: Fetcher) -> Result<()> {
+    info!("Starting codex import from {}", base_url);
+
+    let mut total_imported = 0u32;
+    let mut all_errors = Vec::new();
+
+    let specs: &[(WikiKind, &[&str])] = &[
+        (CHARACTERS_SPEC, CHARACTERS),
+        (HOUSES_SPEC, HOUSES),
+        (PLANETS_SPEC, PLANETS),
+        (GLOSSARY_SPEC, GLOSSARY_TERMS),
+    ];
+
+    for (spec, terms) in specs {
+        info!("Importing {}...", spec.table);
+        let (count, errs) = import_kind(conn, base_url, *spec, terms, fetch);
+        total_imported += count;
+        all_errors.extend(errs);
     }
 
     add_builtin_quotes(conn)?;
 
     info!(
         "Import complete: {} items imported, {} errors",
-        imported,
-        errors.len()
+        total_imported,
+        all_errors.len()
     );
 
     Ok(())
@@ -371,5 +371,150 @@ mod tests {
             Some("https://stub.local/dune/house_atreides"),
             "houses must receive source_url too"
         );
+    }
+
+    /// All four entity types go through the shared `import_kind` path and
+    /// land correct rows with `source_url` set.
+    #[test]
+    fn import_kind_all_tables_landing() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::migrations::run_migrations(&conn).unwrap();
+
+        let terms = &["test_term_one", "test_term_two"];
+        let (_, errs) = import_kind(&conn, "https://stub.local", CHARACTERS_SPEC, terms, stub_fetcher);
+        assert!(errs.is_empty(), "stub should not fail");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM characters WHERE source='wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "both terms should land in characters");
+
+        let url: Option<String> = conn
+            .query_row(
+                "SELECT source_url FROM characters WHERE name = ?1",
+                ["test term one"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            url.as_deref(),
+            Some("https://stub.local/dune/test_term_one"),
+            "source_url must be set"
+        );
+
+        // houses via shared path
+        let (_, errs) = import_kind(&conn, "https://stub.local", HOUSES_SPEC, terms, stub_fetcher);
+        assert!(errs.is_empty());
+        let hcount: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM houses WHERE source='wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hcount, 2);
+
+        // planets via shared path
+        let (_, errs) = import_kind(&conn, "https://stub.local", PLANETS_SPEC, terms, stub_fetcher);
+        assert!(errs.is_empty());
+        let pcount: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM planets WHERE source='wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pcount, 2);
+
+        // glossary via shared path
+        let (_, errs) = import_kind(&conn, "https://stub.local", GLOSSARY_SPEC, terms, stub_fetcher);
+        assert!(errs.is_empty());
+        let gcount: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM glossary WHERE source='wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(gcount, 2);
+
+        // glossary uses term/definition columns
+        let (term_val, def_val): (String, String) = conn
+            .query_row(
+                "SELECT term, definition FROM glossary WHERE term = ?1",
+                ["test term one"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(term_val, "test term one");
+        assert!(def_val.contains("test_term_one"));
+    }
+
+    /// When the fetcher fails for ONE term, that error is recorded and the
+    /// remaining terms still import successfully.
+    #[test]
+    fn import_kind_partial_failure_records_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::migrations::run_migrations(&conn).unwrap();
+
+        fn fail_first(base_url: &str, term: &str) -> Result<WikiResponse> {
+            if term == "bad_term" {
+                anyhow::bail!("network timeout");
+            }
+            stub_fetcher(base_url, term)
+        }
+
+        let terms = &["bad_term", "good_term"];
+        let (imported, errs) =
+            import_kind(&conn, "https://stub.local", CHARACTERS_SPEC, terms, fail_first);
+
+        assert_eq!(imported, 1, "only good_term should import");
+        assert_eq!(errs.len(), 1, "one error should be recorded");
+        assert!(
+            errs[0].contains("bad_term"),
+            "error message should name the failing term"
+        );
+
+        let row: Option<String> = conn
+            .query_row(
+                "SELECT name FROM characters WHERE name = ?1",
+                ["good term"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(row.as_deref(), Some("good term"));
+    }
+
+    /// A description shorter than 10 characters causes the row to be skipped.
+    #[test]
+    fn import_kind_short_description_skipped() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::database::migrations::run_migrations(&conn).unwrap();
+
+        fn short_desc(_base_url: &str, term: &str) -> Result<WikiResponse> {
+            Ok(WikiResponse {
+                description: "short".to_string(),
+                wiki: format!("https://stub.local/dune/{}", term),
+            })
+        }
+
+        let terms = &["tiny"];
+        let (imported, _) =
+            import_kind(&conn, "https://stub.local", CHARACTERS_SPEC, terms, short_desc);
+
+        assert_eq!(imported, 0, "short description must be skipped");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM characters WHERE source='wiki'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }
