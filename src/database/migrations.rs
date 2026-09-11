@@ -189,6 +189,113 @@ mod tests {
     }
 
     #[test]
+    fn migration_13_creates_trigram_index_and_backfills_existing_pages() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Simulate a pre-migration-13 database: pages exist before the trigram
+        // index is created, so the migration's backfill must populate it.
+        conn.execute_batch(
+            "CREATE TABLE pages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                page_number INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                UNIQUE(book_id, page_number)
+            );
+            INSERT INTO pages (book_id, page_number, content) VALUES
+                (1, 1, 'The Atreides family rules Arrakis');",
+        )
+        .unwrap();
+
+        run_migrations(&conn).unwrap();
+
+        let trigram_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pages_trigrams'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(trigram_exists, "migration 13 must create pages_trigrams");
+
+        let indexed: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages_trigrams", [], |row| row.get(0))
+            .unwrap();
+        let pages: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            indexed, pages,
+            "backfill must index every pre-existing page"
+        );
+
+        // Substring semantics: an interior substring of the content matches.
+        let hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pages_trigrams WHERE pages_trigrams MATCH '\"treid\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(hit, 1, "trigram index must support substring matching");
+    }
+
+    #[test]
+    fn migration_13_triggers_keep_trigram_rows_in_sync() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+
+        // pages_trigrams_ai indexes new pages.
+        conn.execute_batch(
+            "INSERT INTO books (title, file_path, page_count, word_count)
+             VALUES ('Dune', '/tmp/dune.pdf', 10, 100);
+             INSERT INTO pages (book_id, page_number, content) VALUES (1, 1, 'the spice must flow')",
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages_trigrams", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "pages_trigrams_ai must index inserts");
+
+        // pages_trigrams_au replaces stale trigrams with the updated content.
+        conn.execute(
+            "UPDATE pages SET content = 'The Atreides family' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        let new_hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pages_trigrams WHERE pages_trigrams MATCH '\"treid\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            new_hit, 1,
+            "pages_trigrams_au must index the updated content"
+        );
+        let old_hit: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pages_trigrams WHERE pages_trigrams MATCH '\"spice\"'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            old_hit, 0,
+            "pages_trigrams_au must drop the stale trigrams"
+        );
+
+        // pages_trigrams_ad removes deleted pages entirely.
+        conn.execute("DELETE FROM pages WHERE id = 1", []).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pages_trigrams", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "pages_trigrams_ad must remove deleted pages");
+    }
+
+    #[test]
     fn migration_12_columns_drop_idempotently_on_rerun() {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
