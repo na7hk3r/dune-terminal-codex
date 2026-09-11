@@ -277,7 +277,7 @@ impl App {
 
     pub fn search(&mut self, query: &str, db: &Database) {
         self.search_input = query.to_string();
-        self.search_results = db.search_fts(query, None, 20).unwrap_or_default();
+        self.search_results = db.fuzzy_search(query, None, 20).unwrap_or_default();
         self.selected_result = 0;
     }
 
@@ -570,5 +570,51 @@ mod tests {
             app.codex_items,
             db.list_names(LookupKind::Glossary).unwrap()
         );
+    }
+
+    #[test]
+    fn app_search_dispatches_fuzzy_search_for_typo_queries() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let book_id = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        db.insert_page(book_id, 1, "The Atreides family rules Arrakis")
+            .unwrap();
+
+        let config = Config::default();
+        let mut app = App::new(&db, &config);
+        app.active_tab = ActiveTab::Search;
+
+        // The exact unicode61 index cannot match the typo; only the TUI's
+        // fuzzy dispatch keeps the search useful here.
+        app.search("atelides", &db);
+        assert!(
+            !app.search_results.is_empty(),
+            "TUI search must route typo queries through fuzzy_search"
+        );
+        assert!(app.search_results[0].content.contains("Atreides"));
+    }
+
+    #[test]
+    fn app_search_matches_within_words_through_fuzzy() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let book_id = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        db.insert_page(book_id, 1, "the spice must flow")
+            .unwrap();
+
+        let config = Config::default();
+        let mut app = App::new(&db, &config);
+        app.active_tab = ActiveTab::Search;
+
+        // "spi" is a 3-char prefix of "spice": the exact unicode61 token
+        // index would miss it, the trigram index must not.
+        app.search("spi", &db);
+        assert!(
+            !app.search_results.is_empty(),
+            "TUI search must match interior word fragments via trigrams"
+        );
+        assert!(app.search_results[0].content.contains("spice"));
     }
 }
