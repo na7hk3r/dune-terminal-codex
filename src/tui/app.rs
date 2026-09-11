@@ -393,44 +393,14 @@ impl App {
         self.codex_detail = None;
         self.selected_codex_item = 0;
 
-        match self.codex_sub_tab {
-            CodexSubTab::Characters => {
-                if let Ok(mut stmt) = db.conn.prepare("SELECT name FROM characters ORDER BY name") {
-                    self.codex_items = stmt
-                        .query_map([], |row| row.get(0))
-                        .unwrap()
-                        .filter_map(|r| r.ok())
-                        .collect();
-                }
-            }
-            CodexSubTab::Houses => {
-                if let Ok(mut stmt) = db.conn.prepare("SELECT name FROM houses ORDER BY name") {
-                    self.codex_items = stmt
-                        .query_map([], |row| row.get(0))
-                        .unwrap()
-                        .filter_map(|r| r.ok())
-                        .collect();
-                }
-            }
-            CodexSubTab::Planets => {
-                if let Ok(mut stmt) = db.conn.prepare("SELECT name FROM planets ORDER BY name") {
-                    self.codex_items = stmt
-                        .query_map([], |row| row.get(0))
-                        .unwrap()
-                        .filter_map(|r| r.ok())
-                        .collect();
-                }
-            }
-            CodexSubTab::Glossary => {
-                if let Ok(mut stmt) = db.conn.prepare("SELECT term FROM glossary ORDER BY term") {
-                    self.codex_items = stmt
-                        .query_map([], |row| row.get(0))
-                        .unwrap()
-                        .filter_map(|r| r.ok())
-                        .collect();
-                }
-            }
-        }
+        use crate::database::repository::LookupKind;
+        let kind = match self.codex_sub_tab {
+            CodexSubTab::Characters => LookupKind::Character,
+            CodexSubTab::Houses => LookupKind::House,
+            CodexSubTab::Planets => LookupKind::Planet,
+            CodexSubTab::Glossary => LookupKind::Glossary,
+        };
+        self.codex_items = db.list_names(kind).unwrap_or_default();
     }
 
     pub fn switch_codex_sub_tab(&mut self, tab: CodexSubTab, db: &Database) {
@@ -556,5 +526,49 @@ mod tests {
         let (tmp, app) = app_with_book(412);
         let (path, _) = app.selected_book_open_target().unwrap();
         assert_eq!(path, tmp.path().join("dune.pdf").to_string_lossy());
+    }
+
+    #[test]
+    fn load_codex_items_lists_each_subtab_through_lookup_kind() {
+        use crate::database::repository::LookupKind;
+
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        db.conn
+            .execute_batch(
+                "INSERT INTO characters (name, description) VALUES
+                    ('Paul Atreides', 'Duke of Arrakis'),
+                    ('Leto Atreides', 'Father of Paul');
+                 INSERT INTO houses (name, description) VALUES
+                    ('Atreides', 'Noble house of Caladan');
+                 INSERT INTO planets (name, description) VALUES
+                    ('Arrakis', 'Desert planet, source of spice');
+                 INSERT INTO glossary (term, definition) VALUES
+                    ('Melange', 'The spice of Arrakis');",
+            )
+            .unwrap();
+
+        let config = Config::default();
+        let mut app = App::new(&db, &config);
+
+        // Characters is the default subtab: items are the sorted character names.
+        assert_eq!(
+            app.codex_items,
+            vec!["Leto Atreides".to_string(), "Paul Atreides".to_string()]
+        );
+
+        app.switch_codex_sub_tab(CodexSubTab::Houses, &db);
+        assert_eq!(app.codex_items, vec!["Atreides".to_string()]);
+
+        app.switch_codex_sub_tab(CodexSubTab::Planets, &db);
+        assert_eq!(app.codex_items, vec!["Arrakis".to_string()]);
+
+        app.switch_codex_sub_tab(CodexSubTab::Glossary, &db);
+        assert_eq!(app.codex_items, vec!["Melange".to_string()]);
+
+        // The same names must exactly match the repository's list_names output.
+        assert_eq!(
+            app.codex_items,
+            db.list_names(LookupKind::Glossary).unwrap()
+        );
     }
 }
