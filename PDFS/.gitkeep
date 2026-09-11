@@ -1,0 +1,11 @@
+# Place your Dune saga PDFs in this folder.
+
+# PDFS/ is gitignored (the old copyrighted PDFs were untracked from the
+# repository), but the folder ships with the repo so a fresh clone has a
+# ready-made place for your books.
+
+# After adding PDFs here, either point `[library] paths` at this folder
+# (`~/.config/dune/config.toml`) and run `dune index`, or index them
+# directly without touching the config:
+#
+#   dune index --file PDFS/*.pdf

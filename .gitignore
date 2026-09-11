@@ -1,2 +1,4 @@
 /target
-/PDFS/
+/PDFS/*
+!/PDFS/.gitkeep
+.atl/
