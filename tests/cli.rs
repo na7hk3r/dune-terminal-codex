@@ -285,3 +285,111 @@ fn cli_empty_database_commands_exit_zero_gracefully() {
         .unwrap();
     assert_eq!(table, 1, "fresh DUNE_DB_PATH must be migrated to current schema");
 }
+
+#[test]
+fn cli_export_json_parses_and_contains_all_sections() {
+    let stdout = run_ok(&["export", "--format", "json"]);
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout).expect("export --format json must be valid JSON");
+    let obj = value.as_object().expect("export json must be an object");
+    for key in [
+        "books",
+        "characters",
+        "houses",
+        "planets",
+        "glossary",
+        "quotes",
+    ] {
+        assert!(obj.contains_key(key), "section '{key}' missing from export");
+    }
+    // Seeded library: one book, characters sorted alphabetically, one quote.
+    assert_eq!(obj["books"][0]["title"], "Dune");
+    assert_eq!(obj["books"][0]["page_count"], 10);
+    assert_eq!(obj["characters"][0]["name"], "Leto Atreides");
+    assert_eq!(obj["houses"][0]["name"], "Atreides");
+    assert_eq!(obj["planets"][0]["name"], "Arrakis");
+    assert_eq!(obj["glossary"][0]["term"], "Melange");
+    assert_eq!(obj["quotes"][0]["text"], "Fear is the mind-killer.");
+    assert_eq!(obj["quotes"][0]["book_title"], "Dune");
+}
+
+#[test]
+fn cli_export_markdown_renders_all_sections() {
+    let stdout = run_ok(&["export"]);
+    assert!(stdout.contains("## Books"), "{stdout:?}");
+    assert!(stdout.contains("| Title | Pages | Words |"), "{stdout:?}");
+    assert!(stdout.contains("| Dune | 10 | 1000 |"), "{stdout:?}");
+    assert!(stdout.contains("## Characters"), "{stdout:?}");
+    assert!(stdout.contains("Paul Atreides"), "{stdout:?}");
+    assert!(stdout.contains("## Quotes"), "{stdout:?}");
+    assert!(stdout.contains("Fear is the mind-killer."), "{stdout:?}");
+}
+
+#[test]
+fn cli_export_invalid_format_is_a_usage_error() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    seed_search_db(tmp.path());
+    let output = run_hermetic(tmp.path(), xdg.path(), &["export", "--format", "xml"]);
+    assert!(
+        !output.status.success(),
+        "an unknown --format must exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid value") && stderr.contains("xml"),
+        "clap must reject the unknown format: {stderr:?}"
+    );
+}
+
+#[test]
+fn cli_export_empty_database_exits_zero_for_both_formats() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let xdg = tempfile::TempDir::new().unwrap();
+    let db_path = tmp.path().join("fresh").join("dune.db");
+
+    for args in [&["export"][..], &["export", "--format", "json"][..]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_dune"))
+            .args(args)
+            .env("DUNE_DB_PATH", &db_path)
+            .env("XDG_DATA_HOME", xdg.path())
+            .env("HOME", tmp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?} must exit 0 on an empty database: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // markdown on the fresh DB still renders the section headers.
+    let md = Command::new(env!("CARGO_BIN_EXE_dune"))
+        .args(["export"])
+        .env("DUNE_DB_PATH", &db_path)
+        .env("XDG_DATA_HOME", xdg.path())
+        .env("HOME", tmp.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&md.stdout);
+    assert!(stdout.contains("## Books"), "{stdout:?}");
+
+    // json on the fresh DB parses with every section empty.
+    let json_out = Command::new(env!("CARGO_BIN_EXE_dune"))
+        .args(["export", "--format", "json"])
+        .env("DUNE_DB_PATH", &db_path)
+        .env("XDG_DATA_HOME", xdg.path())
+        .env("HOME", tmp.path())
+        .output()
+        .unwrap();
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&json_out.stdout))
+            .expect("empty-db export must still be valid JSON");
+    for key in ["books", "characters", "houses", "planets", "glossary", "quotes"] {
+        assert_eq!(
+            value[key].as_array().map(Vec::len),
+            Some(0),
+            "empty-db section '{key}' must be an empty array"
+        );
+    }
+}
