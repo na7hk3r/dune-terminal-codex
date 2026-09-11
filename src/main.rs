@@ -42,6 +42,7 @@ fn main() -> anyhow::Result<()> {
             files,
         }) => cmd_index(rebuild, verbose, files),
         Some(Commands::ImportCodex) => cmd_import_codex(),
+        Some(Commands::Export { format, output }) => cmd_export(&format, output.as_deref()),
         Some(Commands::Config) => cmd_config(),
         Some(Commands::Open { path, page }) => cmd_open(&path, page),
     }
@@ -364,6 +365,24 @@ fn cmd_import_codex() -> anyhow::Result<()> {
     )?;
 
     println!("Codex import complete.");
+    Ok(())
+}
+
+/// Exports the library and codex as markdown (default) or JSON, to stdout or
+/// to `--output`. Clap's value_parser already rejects unknown formats with a
+/// usage error + non-zero exit; the fallback below is defensive only.
+fn cmd_export(format: &str, output: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let db = open_database()?;
+    let data = cli::export::collect_export_data(&db)?;
+    let rendered = match format {
+        "markdown" => cli::export::render_markdown(&data),
+        "json" => cli::export::render_json(&data)?,
+        other => anyhow::bail!("unsupported export format: {other}"),
+    };
+    match output {
+        Some(path) => std::fs::write(path, rendered)?,
+        None => print!("{}", rendered),
+    }
     Ok(())
 }
 

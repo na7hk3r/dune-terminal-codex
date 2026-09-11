@@ -136,6 +136,30 @@ ALTER TABLE quotes DROP COLUMN chapter;
 ALTER TABLE quotes DROP COLUMN page_number;
 ";
 
+pub const MIGRATION_13_TRIGRAMS: &str = "
+CREATE VIRTUAL TABLE pages_trigrams USING fts5(
+    content,
+    tokenize='trigram case_sensitive 0',
+    content='pages',
+    content_rowid='id'
+);
+
+CREATE TRIGGER pages_trigrams_ai AFTER INSERT ON pages BEGIN
+    INSERT INTO pages_trigrams(rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER pages_trigrams_ad AFTER DELETE ON pages BEGIN
+    INSERT INTO pages_trigrams(pages_trigrams, rowid, content) VALUES('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER pages_trigrams_au AFTER UPDATE ON pages BEGIN
+    INSERT INTO pages_trigrams(pages_trigrams, rowid, content) VALUES('delete', old.id, old.content);
+    INSERT INTO pages_trigrams(rowid, content) VALUES (new.id, new.content);
+END;
+
+INSERT INTO pages_trigrams(rowid, content) SELECT id, content FROM pages;
+";
+
 pub const CREATE_MIGRATIONS: &str = "
 CREATE TABLE IF NOT EXISTS migrations (
     version INTEGER PRIMARY KEY,
@@ -155,4 +179,5 @@ pub const ALL_MIGRATIONS: &[(&str, &str)] = &[
     ("10", CREATE_FTS_SYNC),
     ("11", MIGRATION_11_SOURCE_URL),
     ("12", MIGRATION_12_DROP_DEAD),
+    ("13", MIGRATION_13_TRIGRAMS),
 ];

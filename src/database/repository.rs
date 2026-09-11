@@ -50,6 +50,28 @@ pub struct Database {
     pub conn: Connection,
 }
 
+/// Keeps only characters the FTS indexes can represent: alphanumerics, spaces
+/// and underscores (the same contract `search_fts` has always used).
+fn sanitize_query(query: &str) -> String {
+    query
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_')
+        .collect()
+}
+
+/// Breaks a token into its overlapping 3-character windows, e.g.
+/// `"atelides"` -> `["ate", "tel", "eli", "lid", "ide", "des"]`.
+/// Tokens shorter than 3 chars yield no trigrams.
+fn trigram_terms(token: &str) -> Vec<String> {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() < 3 {
+        return Vec::new();
+    }
+    (0..=chars.len() - 3)
+        .map(|i| chars[i..i + 3].iter().collect())
+        .collect()
+}
+
 impl Database {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         if let Some(parent) = path.parent() {
@@ -101,10 +123,7 @@ impl Database {
         book: Option<&str>,
         limit: u32,
     ) -> anyhow::Result<Vec<SearchResult>> {
-        let sanitized: String = query
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '_')
-            .collect();
+        let sanitized = sanitize_query(query);
         let terms: Vec<&str> = sanitized.split_whitespace().collect();
         if terms.is_empty() {
             return Ok(Vec::new());
@@ -151,6 +170,101 @@ impl Database {
         };
 
         Ok(results)
+    }
+
+    /// Fuzzy full-text search over the trigram index (migration 13).
+    ///
+    /// - Queries shorter than 3 characters (or empty after sanitizing) fall
+    ///   back to the exact `search_fts` path, since trigrams need 3+ chars.
+    /// - Punctuation-only queries sanitize to nothing and return an empty
+    ///   vector without error.
+    /// - 3+ char queries match the OR of each token's trigrams, so pages that
+    ///   share only part of the query (typos, interior substrings) still rank
+    ///   via bm25; multi-token queries AND the per-token trigram groups.
+    /// - Results merge trigram matches first, then append exact `search_fts`
+    ///   hits not already present, deduplicated by `(book_id, page_number)`.
+    pub fn fuzzy_search(
+        &self,
+        query: &str,
+        book: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<SearchResult>> {
+        let sanitized = sanitize_query(query);
+        let non_space_chars: usize = sanitized.chars().filter(|c| !c.is_whitespace()).count();
+        if non_space_chars < 3 {
+            return self.search_fts(query, book, limit);
+        }
+
+        // Per token: OR its trigrams so partial/typo'd matches still hit.
+        // Tokens shorter than 3 chars contribute nothing; if every token is
+        // too short the query degenerates to the exact path.
+        let mut groups: Vec<String> = Vec::new();
+        for token in sanitized.split_whitespace() {
+            let trigrams = trigram_terms(token);
+            if trigrams.is_empty() {
+                continue;
+            }
+            let group = trigrams
+                .iter()
+                .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            groups.push(format!("({group})"));
+        }
+        if groups.is_empty() {
+            return self.search_fts(query, book, limit);
+        }
+        let fts_query = groups.join(" AND ");
+
+        let mut sql = String::from(
+            "SELECT p.book_id, b.title, p.page_number, p.content,
+                    highlight(pages_trigrams, 0, '>>>', '<<<') as highlighted
+             FROM pages_trigrams
+             JOIN pages p ON p.id = pages_trigrams.rowid
+             JOIN books b ON b.id = p.book_id
+             WHERE pages_trigrams MATCH ?1",
+        );
+        if book.is_some() {
+            sql.push_str(" AND LOWER(b.title) LIKE ?3");
+        }
+        sql.push_str(" ORDER BY rank LIMIT ?2");
+
+        let map_row = |row: &rusqlite::Row| {
+            Ok(SearchResult {
+                book_id: row.get(0)?,
+                book_title: row.get(1)?,
+                page_number: row.get(2)?,
+                content: row.get(3)?,
+                highlighted: row.get(4)?,
+            })
+        };
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let trigram_results: Vec<SearchResult> = match book {
+            Some(filter) => {
+                let pattern = format!("%{}%", filter.to_lowercase());
+                stmt.query_map(params![fts_query, limit, pattern], map_row)?
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            None => stmt
+                .query_map(params![fts_query, limit], map_row)?
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+
+        // Append exact matches not already surfaced by the trigram index,
+        // deduplicated by the pages natural key.
+        let mut merged = trigram_results;
+        let exact = self.search_fts(query, book, limit)?;
+        for result in exact {
+            let duplicate = merged
+                .iter()
+                .any(|r| r.book_id == result.book_id && r.page_number == result.page_number);
+            if !duplicate {
+                merged.push(result);
+            }
+        }
+        merged.truncate(limit as usize);
+        Ok(merged)
     }
 
     /// Resolves a book's file path from its numeric id.
@@ -646,5 +760,180 @@ mod tests {
             .unwrap();
         assert_eq!(desc, "Duke of Arrakis (updated)");
         assert_eq!(url, "https://dune.fandom.com/wiki/Paul_Atreides");
+    }
+
+    // --- T12: trigram fuzzy search tests ---
+
+    fn seed_fuzzy_pages(db: &Database) {
+        let dune = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        let desert = db
+            .insert_book("Desert Lore", "/tmp/desert.pdf", 100, 50000, 512000)
+            .unwrap();
+        let other = db
+            .insert_book("Unrelated", "/tmp/other.pdf", 50, 25000, 256000)
+            .unwrap();
+        // Atreides shares "ide"+"des" with a typo'd query "atelides";
+        // desert shares only "des"; unrelated shares none.
+        db.insert_page(
+            dune,
+            1,
+            "The Atreides family rules Arrakis and the spice must flow",
+        )
+        .unwrap();
+        db.insert_page(desert, 1, "desert dwellers of the deep desert")
+            .unwrap();
+        db.insert_page(other, 1, "quiet library shelves under starlight")
+            .unwrap();
+    }
+
+    #[test]
+    fn fuzzy_search_tolerates_typos_via_trigram_overlap() {
+        let db = test_db();
+        seed_fuzzy_pages(&db);
+
+        let results = db.fuzzy_search("atelides", None, 10).unwrap();
+        assert!(!results.is_empty(), "typo'd query must still find pages");
+
+        let atreides_idx = results
+            .iter()
+            .position(|r| r.content.contains("Atreides"))
+            .expect("fuzzy search must surface the Atreides page");
+        let desert_idx = results
+            .iter()
+            .position(|r| r.content.contains("desert"))
+            .expect("fuzzy search must also surface the partial trigram page");
+        assert!(
+            atreides_idx < desert_idx,
+            "page sharing more trigrams must rank first, got order: {:?}",
+            results.iter().map(|r| &r.book_title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn fuzzy_search_falls_back_to_exact_search_for_short_queries() {
+        let db = test_db();
+        seed_fuzzy_pages(&db);
+
+        // A query shorter than 3 chars cannot use trigrams: the result must be
+        // bit-identical to the existing exact search path.
+        assert_eq!(
+            db.fuzzy_search("sp", None, 10).unwrap()
+                .iter()
+                .map(|r| (r.book_title.clone(), r.page_number))
+                .collect::<Vec<_>>(),
+            db.search_fts("sp", None, 10).unwrap()
+                .iter()
+                .map(|r| (r.book_title.clone(), r.page_number))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn fuzzy_search_punctuation_only_returns_empty_without_error() {
+        let db = test_db();
+        seed_fuzzy_pages(&db);
+
+        let results = db.fuzzy_search("!!!  ???", None, 10).unwrap();
+        assert!(results.is_empty(), "punctuation-only query must be empty");
+    }
+
+    #[test]
+    fn fuzzy_search_respects_book_filter() {
+        let db = test_db();
+        let dune = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        let messiah = db
+            .insert_book("Dune Messiah", "/tmp/messiah.pdf", 300, 150000, 768000)
+            .unwrap();
+        db.insert_page(dune, 1, "The Atreides family rules Arrakis")
+            .unwrap();
+        db.insert_page(messiah, 1, "Paul Atreides arrives on Dune")
+            .unwrap();
+
+        let filtered = db
+            .fuzzy_search("atreides", Some("messiah"), 10)
+            .unwrap();
+        assert!(!filtered.is_empty());
+        assert!(
+            filtered.iter().all(|r| r.book_title == "Dune Messiah"),
+            "book filter must keep only the matching book: {:?}",
+            filtered.iter().map(|r| &r.book_title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn fuzzy_search_merges_and_dedupes_against_exact_results() {
+        let db = test_db();
+        let dune = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        db.insert_page(
+            dune,
+            1,
+            "the spice must flow, the spice extends consciousness",
+        )
+        .unwrap();
+        db.insert_page(dune, 2, "spice melange is rare and precious")
+            .unwrap();
+
+        // "spice" is an exact unicode61 token AND a trigram substring: both
+        // paths match, so the merge must not duplicate any page.
+        let results = db.fuzzy_search("spice", None, 10).unwrap();
+        assert!(!results.is_empty());
+        let key = |r: &SearchResult| (r.book_id, r.page_number);
+        let mut keys: Vec<(i64, u32)> = results.iter().map(key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(
+            keys.len(),
+            results.len(),
+            "merged results must not contain duplicate pages"
+        );
+        assert_eq!(keys.len(), 2, "both spice pages must be found once each");
+    }
+
+    #[test]
+    fn fuzzy_search_requires_all_tokens_of_multi_token_query() {
+        let db = test_db();
+        let dune = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        let sand = db
+            .insert_book("Sand Chronicles", "/tmp/sand.pdf", 80, 40000, 409600)
+            .unwrap();
+        let spicebook = db
+            .insert_book("Spice Tales", "/tmp/spicetal.pdf", 60, 30000, 307200)
+            .unwrap();
+        db.insert_page(
+            dune,
+            1,
+            "The Atreides family and the spice must flow",
+        )
+        .unwrap();
+        db.insert_page(sand, 1, "Atreides honor and duty").unwrap();
+        db.insert_page(spicebook, 1, "spice melange is life").unwrap();
+
+        let results = db.fuzzy_search("atreides spice", None, 10).unwrap();
+        assert_eq!(results.len(), 1, "both tokens must appear in the match");
+        assert!(results[0].content.contains("Atreides"));
+        assert!(results[0].content.contains("spice"));
+    }
+
+    #[test]
+    fn fuzzy_search_finds_partial_substrings() {
+        let db = test_db();
+        let dune = db
+            .insert_book("Dune", "/tmp/dune.pdf", 412, 200000, 1024000)
+            .unwrap();
+        db.insert_page(dune, 1, "The Atreides family rules Arrakis")
+            .unwrap();
+
+        // "treid" is a non-prefix interior substring of "Atreides".
+        let results = db.fuzzy_search("treid", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.contains("Atreides"));
     }
 }

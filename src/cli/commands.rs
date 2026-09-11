@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -86,6 +87,17 @@ pub enum Commands {
 
     /// Import codex data from external sources
     ImportCodex,
+
+    /// Export the library and codex as markdown or JSON
+    Export {
+        /// Output format
+        #[arg(long, value_parser = ["markdown", "json"], default_value = "markdown")]
+        format: String,
+
+        /// Write to a file instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 
     /// Show or edit configuration
     Config,
