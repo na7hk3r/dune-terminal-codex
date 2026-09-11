@@ -544,4 +544,107 @@ mod tests {
             db.entity_by_name(LookupKind::Glossary, "Melange").unwrap()
         );
     }
+
+    #[test]
+    fn source_url_round_trips_through_each_codex_table() {
+        let db = test_db();
+
+        db.conn
+            .execute(
+                "INSERT INTO characters (name, description, source, source_url)
+                 VALUES (?1, ?2, 'wiki', ?3)",
+                rusqlite::params![
+                    "Paul Atreides",
+                    "Duke of Arrakis",
+                    "https://dune.fandom.com/wiki/Paul_Atreides"
+                ],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO houses (name, description, source, source_url)
+                 VALUES (?1, ?2, 'wiki', ?3)",
+                rusqlite::params![
+                    "Atreides",
+                    "Noble house",
+                    "https://dune.fandom.com/wiki/House_Atreides"
+                ],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO planets (name, description, source, source_url)
+                 VALUES (?1, ?2, 'wiki', ?3)",
+                rusqlite::params![
+                    "Arrakis",
+                    "Desert planet",
+                    "https://dune.fandom.com/wiki/Arrakis"
+                ],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO glossary (term, definition, source, source_url)
+                 VALUES (?1, ?2, 'wiki', ?3)",
+                rusqlite::params![
+                    "Melange",
+                    "The spice",
+                    "https://dune.fandom.com/wiki/Melange"
+                ],
+            )
+            .unwrap();
+
+        let roundtrip = |sql: &str, name: &str| -> Option<String> {
+            db.conn
+                .query_row(sql, [name], |row| row.get::<_, String>(0))
+                .ok()
+        };
+
+        assert_eq!(
+            roundtrip(
+                "SELECT source_url FROM characters WHERE name = ?1",
+                "Paul Atreides"
+            )
+            .as_deref(),
+            Some("https://dune.fandom.com/wiki/Paul_Atreides")
+        );
+        assert_eq!(
+            roundtrip("SELECT source_url FROM houses WHERE name = ?1", "Atreides")
+                .as_deref(),
+            Some("https://dune.fandom.com/wiki/House_Atreides")
+        );
+        assert_eq!(
+            roundtrip("SELECT source_url FROM planets WHERE name = ?1", "Arrakis")
+                .as_deref(),
+            Some("https://dune.fandom.com/wiki/Arrakis")
+        );
+        assert_eq!(
+            roundtrip("SELECT source_url FROM glossary WHERE term = ?1", "Melange")
+                .as_deref(),
+            Some("https://dune.fandom.com/wiki/Melange")
+        );
+
+        // The URL also survives a re-import (INSERT OR REPLACE upsert).
+        db.conn
+            .execute(
+                "INSERT OR REPLACE INTO characters (name, description, source, source_url)
+                 VALUES (?1, ?2, 'wiki', ?3)",
+                rusqlite::params![
+                    "Paul Atreides",
+                    "Duke of Arrakis (updated)",
+                    "https://dune.fandom.com/wiki/Paul_Atreides"
+                ],
+            )
+            .unwrap();
+        let (desc, url): (String, String) = db
+            .conn
+            .query_row(
+                "SELECT description, source_url FROM characters WHERE name = ?1",
+                ["Paul Atreides"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(desc, "Duke of Arrakis (updated)");
+        assert_eq!(url, "https://dune.fandom.com/wiki/Paul_Atreides");
+    }
 }
