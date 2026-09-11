@@ -116,6 +116,26 @@ SET source_url = aliases, aliases = NULL
 WHERE source_url IS NULL AND aliases LIKE 'http%';
 ";
 
+pub const MIGRATION_12_DROP_DEAD: &str = "
+DROP TABLE chapters;
+
+ALTER TABLE characters DROP COLUMN house;
+ALTER TABLE characters DROP COLUMN related;
+ALTER TABLE characters DROP COLUMN books;
+
+ALTER TABLE houses DROP COLUMN homeworld;
+ALTER TABLE houses DROP COLUMN notable_members;
+
+ALTER TABLE planets DROP COLUMN system;
+ALTER TABLE planets DROP COLUMN notable_features;
+
+ALTER TABLE glossary DROP COLUMN category;
+ALTER TABLE glossary DROP COLUMN origin;
+
+ALTER TABLE quotes DROP COLUMN chapter;
+ALTER TABLE quotes DROP COLUMN page_number;
+";
+
 pub const CREATE_MIGRATIONS: &str = "
 CREATE TABLE IF NOT EXISTS migrations (
     version INTEGER PRIMARY KEY,
@@ -134,4 +154,5 @@ pub const ALL_MIGRATIONS: &[(&str, &str)] = &[
     ("9", CREATE_SEARCH_INDEX),
     ("10", CREATE_FTS_SYNC),
     ("11", MIGRATION_11_SOURCE_URL),
+    ("12", MIGRATION_12_DROP_DEAD),
 ];

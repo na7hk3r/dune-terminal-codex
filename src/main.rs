@@ -48,6 +48,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn open_database() -> anyhow::Result<Database> {
+    // Test hook and power-user override: point the database at a specific
+    // file instead of the default XDG data location. The XDG default is
+    // preserved when the variable is unset.
+    if let Ok(path) = std::env::var("DUNE_DB_PATH") {
+        return Database::open(std::path::Path::new(&path));
+    }
     Database::open_default()
 }
 

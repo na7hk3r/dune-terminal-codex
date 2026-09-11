@@ -122,4 +122,93 @@ mod tests {
         assert_eq!(url, None, "non-URL aliases must not be backfilled");
         assert_eq!(aliases.as_deref(), Some("The Baron"));
     }
+
+    fn table_columns(conn: &Connection, table: &str) -> Vec<String> {
+        conn.prepare(&format!("PRAGMA table_info({})", table))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
+    }
+
+    #[test]
+    fn migration_12_drops_dead_columns_and_chapters_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+
+        // chapters table is gone entirely.
+        let chapters_exist: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chapters'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(!chapters_exist, "chapters table must be dropped by migration 12");
+
+        // Dead columns are gone from each codex table.
+        let character_cols = table_columns(&conn, "characters");
+        for dead in ["house", "related", "books"] {
+            assert!(
+                !character_cols.iter().any(|c| c == dead),
+                "characters.{dead} must be dropped by migration 12, got columns {character_cols:?}"
+            );
+        }
+        let house_cols = table_columns(&conn, "houses");
+        for dead in ["homeworld", "notable_members"] {
+            assert!(!house_cols.iter().any(|c| c == dead));
+        }
+        let planet_cols = table_columns(&conn, "planets");
+        for dead in ["system", "notable_features"] {
+            assert!(!planet_cols.iter().any(|c| c == dead));
+        }
+        let glossary_cols = table_columns(&conn, "glossary");
+        for dead in ["category", "origin"] {
+            assert!(!glossary_cols.iter().any(|c| c == dead));
+        }
+        let quote_cols = table_columns(&conn, "quotes");
+        for dead in ["chapter", "page_number"] {
+            assert!(!quote_cols.iter().any(|c| c == dead));
+        }
+
+        // Living columns survive: source_url (migration 11) and the display/source columns.
+        for col in ["name", "description", "source", "source_url"] {
+            assert!(character_cols.iter().any(|c| c == col));
+        }
+        for col in ["name", "description", "source", "source_url"] {
+            assert!(house_cols.iter().any(|c| c == col));
+        }
+        for col in ["term", "definition", "source", "source_url"] {
+            assert!(glossary_cols.iter().any(|c| c == col));
+        }
+        for col in ["text", "attribution", "book_title", "source"] {
+            assert!(quote_cols.iter().any(|c| c == col));
+        }
+    }
+
+    #[test]
+    fn migration_12_columns_drop_idempotently_on_rerun() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        run_migrations(&conn).unwrap();
+
+        // Second run must not re-apply or fail; version count stays at the total.
+        let count: u32 = conn
+            .query_row("SELECT COUNT(*) FROM migrations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, ALL_MIGRATIONS.len() as u32);
+
+        // The dropped schema state is stable across both runs.
+        let chapters_exist: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chapters'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(!chapters_exist);
+    }
 }
